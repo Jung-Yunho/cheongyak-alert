@@ -13,8 +13,8 @@ rem Korean notes live in README.md instead.
 rem
 rem -Dfile.encoding=UTF-8 is required on JDK 17: it defaults to MS949 on Korean
 rem Windows, so the single-file launcher would read this UTF-8 source as MS949
-rem and mangle every Korean literal -- the IPO table lookup then silently
-rem matches nothing. Harmless on JDK 18+, which already defaults to UTF-8.
+rem and mangle every Korean literal -- the region filter then silently matches
+rem nothing. Harmless on JDK 18+, which already defaults to UTF-8.
 rem ---------------------------------------------------------------------------
 
 chcp 65001 >nul

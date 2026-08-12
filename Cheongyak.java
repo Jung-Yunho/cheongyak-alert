@@ -1,5 +1,5 @@
 /*
- * 청약 알림 - 아파트(청약홈) + 공모주(38커뮤니케이션) 신규 건을 텔레그램으로 보낸다.
+ * 청약 알림 - 아파트 청약(청약홈)의 신규 공고를 텔레그램으로 보낸다.
  *
  * 빌드 불필요. JDK 11 이상이면 소스 파일을 그대로 실행한다.
  *   java Cheongyak.java             평소 실행 (작업 스케줄러에 등록)
@@ -24,7 +24,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,9 +41,11 @@ import java.util.regex.Pattern;
 
 public class Cheongyak {
 
-    static final String IPO_URL = "http://www.38.co.kr/html/fund/index.htm?o=k";
     static final String APT_URL =
             "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancDetail";
+    // 분양가는 분양정보가 아니라 주택형별 상세에 있다(주택형마다 값이 다르기 때문).
+    static final String MDL_URL =
+            "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancMdl";
 
     // 청약홈 SUBSCRPT_AREA_CODE_NM 은 "서울" "경기" "인천" 처럼 짧은 표기다
     // ("서울특별시" 가 아니다). 실제 응답 1000건에서 확인한 값.
@@ -55,7 +56,7 @@ public class Cheongyak {
      * key   중복 판단용
      * start 청약 접수 시작일(ISO). 모르면 빈 문자열
      * end   청약 접수 종료일(ISO). 모르면 빈 문자열 — 이때는 마감 판정에서 제외하지 않는다
-     * sido  시·도. 웹 페이지 필터용. 공모주는 지역 개념이 없어 빈 문자열
+     * sido  시·도. 웹 페이지 필터용
      * gugun 시·군·구. 위와 같음. 주소에서 못 읽으면 빈 문자열
      * text  실제로 보낼 내용
      */
@@ -118,67 +119,6 @@ public class Cheongyak {
         return body(open(url));
     }
 
-    // ---------- 공모주 (38커뮤니케이션) ----------
-
-    static final Pattern ROW = Pattern.compile("<tr[^>]*>(.*?)</tr>", Pattern.DOTALL);
-    static final Pattern CELL = Pattern.compile("<td[^>]*>(.*?)</td>", Pattern.DOTALL);
-    static final Pattern TAG = Pattern.compile("<[^>]+>");
-
-    static List<Item> parseIpo(String html, String today) {
-        List<Item> out = new ArrayList<>();
-        int from = html.indexOf("summary=\"공모주 청약일정\"");
-        if (from < 0) return out;
-        int to = html.indexOf("</table>", from);
-        String table = html.substring(from, to < 0 ? html.length() : to);
-
-        Matcher rows = ROW.matcher(table);
-        while (rows.find()) {
-            List<String> c = new ArrayList<>();
-            Matcher cells = CELL.matcher(rows.group(1));
-            while (cells.find()) {
-                c.add(TAG.matcher(cells.group(1)).replaceAll("").replace("&nbsp;", " ").trim());
-            }
-            // 헤더 / 광고 / 빈 행 걸러내기: 청약일 칸에 "~" 가 있는 행만 진짜 데이터다.
-            if (c.size() < 6 || c.get(0).isEmpty() || !c.get(1).contains("~")) continue;
-            String bgn = ipoDate(c.get(1)), end = ipoEnd(c.get(1));
-            if (closed(end, today)) continue;   // 이미 끝난 청약은 싣지 않는다
-            // 말머리(종류)는 메시지 머리말과 페이지 섹션이 이미 알려주므로 붙이지 않는다.
-            out.add(new Item("ipo:" + c.get(0) + c.get(1), bgn, end, "", "", String.join("\n",
-                    c.get(0),
-                    "청약일 " + c.get(1),
-                    "공모가 " + or(c.get(3), "-"),
-                    "주간사 " + or(c.get(5), "-"))));
-        }
-        return out;
-    }
-
-    /** "2026.09.16~09.17" 의 앞쪽 시작일만 ISO 로. 형식이 다르면 빈 문자열. */
-    static String ipoDate(String range) {
-        if (range.length() < 10) return "";
-        String d = range.substring(0, 10).replace('.', '-');
-        return d.matches("\\d{4}-\\d{2}-\\d{2}") ? d : "";
-    }
-
-    /**
-     * "2026.09.16~09.17" 의 뒤쪽 종료일을 ISO 로. 연도는 시작일에서 가져온다.
-     * "2026.12.30~01.02" 처럼 연말을 넘기면 다음 해로 넘긴다.
-     * 형식이 다르면 빈 문자열 — 그러면 마감 판정에서 제외되어 살아남는다(버리는 쪽이 더 위험).
-     */
-    static String ipoEnd(String range) {
-        String bgn = ipoDate(range);
-        int i = range.indexOf('~');
-        if (bgn.isEmpty() || i < 0) return "";
-        String md = range.substring(i + 1).trim().replace('.', '-');
-        if (!md.matches("\\d{2}-\\d{2}")) return "";
-        int year = Integer.parseInt(bgn.substring(0, 4));
-        if (md.compareTo(bgn.substring(5)) < 0) year++;   // 12월 -> 1월
-        return year + "-" + md;
-    }
-
-    static List<Item> fetchIpo(String today) throws IOException {
-        return parseIpo(new String(get(IPO_URL), Charset.forName("EUC-KR")), today);
-    }
-
     // ---------- 아파트 (청약홈) ----------
 
     /** 평면 객체 하나. 중첩이 없으므로 중괄호 안에 중괄호가 나오지 않는다. */
@@ -221,6 +161,12 @@ public class Cheongyak {
     }
 
     static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions, String today) {
+        return parseApt(recs, regions, today, Map.of());
+    }
+
+    /** prices: 공고번호 -> "11.8억 ~ 14.5억". 없는 공고는 분양가 줄이 빠질 뿐이다. */
+    static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions,
+                               String today, Map<String, String> prices) {
         List<Item> out = new ArrayList<>();
         for (Map<String, String> r : recs) {
             String area = f(r, "SUBSCRPT_AREA_CODE_NM");
@@ -237,6 +183,7 @@ public class Cheongyak {
             List<String> lines = new ArrayList<>();
             lines.add(name);
             lines.add(join(" · ", area, f(r, "HOUSE_SECD_NM")));
+            lines.add(prefix("분양가 ", or(prices.get(no), "")));
             lines.add(f(r, "HSSPLY_ADRES"));
             lines.add(prefix("공고일 ", f(r, "RCRIT_PBLANC_DE")));
             lines.add(bgn.isEmpty() && end.isEmpty() ? "" : "접수 " + bgn + " ~ " + end);
@@ -254,7 +201,62 @@ public class Cheongyak {
         // 공고일 최신순으로 내려오므로 앞쪽 200건이면 최근 몇 달을 덮는다.
         String url = APT_URL + "?page=1&perPage=200&serviceKey="
                 + URLEncoder.encode(key, StandardCharsets.UTF_8);
-        return parseApt(parseRecords(new String(get(url), StandardCharsets.UTF_8)), regions, today);
+        List<Map<String, String>> recs = parseRecords(new String(get(url), StandardCharsets.UTF_8));
+
+        // 분양가는 공고마다 따로 조회해야 한다. 먼저 지역·마감 필터를 통과한 것만 추려서
+        // 그만큼만 부른다(200건 전부 부르면 낭비다). 그래서 파싱을 두 번 한다 — 200건짜리
+        // 문자열 처리라 비용은 무시할 만하고, 금액을 나중에 문자열에 끼워넣는 것보다 깔끔하다.
+        List<Item> first = parseApt(recs, regions, today);
+        Map<String, String> prices = fetchPrices(key, first);
+        return prices.isEmpty() ? first : parseApt(recs, regions, today, prices);
+    }
+
+    /**
+     * 공고별 분양가 범위를 구한다. 반환값은 공고번호 -> "11.8억 ~ 14.5억".
+     *
+     * 주택형마다 값이 달라 하나로 못 정하므로 최저~최고로 묶는다.
+     * 한 공고가 실패해도 나머지는 계속한다 — 분양가는 있으면 좋은 정보지 알림의 본질이 아니다.
+     * 임대처럼 분양가가 없는 유형은 값이 안 잡혀 그냥 지도에서 빠진다.
+     */
+    static Map<String, String> fetchPrices(String key, List<Item> items) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Item it : items) {
+            String no = it.key().substring("apt:".length());
+            try {
+                String url = MDL_URL + "?page=1&perPage=100"
+                        + "&serviceKey=" + URLEncoder.encode(key, StandardCharsets.UTF_8)
+                        + "&" + URLEncoder.encode("cond[PBLANC_NO::EQ]", StandardCharsets.UTF_8)
+                        + "=" + URLEncoder.encode(no, StandardCharsets.UTF_8);
+                long min = Long.MAX_VALUE, max = 0;
+                for (Map<String, String> r : parseRecords(
+                        new String(get(url), StandardCharsets.UTF_8))) {
+                    String v = f(r, "LTTOT_TOP_AMOUNT");
+                    if (!v.matches("\\d+")) continue;
+                    long amt = Long.parseLong(v);
+                    if (amt <= 0) continue;          // 값이 안 정해진 주택형
+                    min = Math.min(min, amt);
+                    max = Math.max(max, amt);
+                }
+                if (max > 0) out.put(no, priceRange(min, max));
+            } catch (Exception e) {
+                System.out.println("분양가 조회 실패(건너뜀) " + no + " - " + e);
+            }
+        }
+        return out;
+    }
+
+    /** 만원 단위 금액을 억으로. 124000 -> "12.4억". 훑어보는 용도라 소수 한 자리면 충분하다. */
+    static String eok(long manwon) {
+        return String.format("%.1f억", manwon / 10000.0);
+    }
+
+    /**
+     * 최저~최고를 한 줄로. 값은 달라도 억으로 반올림하면 같아지는 경우가 흔해서
+     * (44,812 / 44,555 만원 -> 둘 다 4.5억) 표기가 같으면 하나만 쓴다.
+     */
+    static String priceRange(long min, long max) {
+        String lo = eok(min), hi = eok(max);
+        return lo.equals(hi) ? lo : lo + " ~ " + hi;
     }
 
     // ---------- 텔레그램 ----------
@@ -276,33 +278,27 @@ public class Cheongyak {
         }
     }
 
-    static final String[][] SECTIONS = {{"apt:", "🏢 아파트"}, {"ipo:", "📈 공모주"}};
     static final String RULE = "─".repeat(16);
     static final int LIMIT = 3800;   // 텔레그램 상한은 4096. 여유를 둔다.
 
     /**
-     * 보낼 메시지를 만든다. 종류별로 묶어 머리말을 달고, 맨 끝에 웹 주소를 붙인다.
+     * 보낼 메시지를 만든다. 머리말에 건수를 달고, 맨 끝에 웹 주소를 붙인다.
      * 상한을 넘으면 여러 개로 나누고, 나뉜 덩어리에는 머리말을 다시 달아 맥락을 잃지 않게 한다.
      */
     static List<String> compose(List<Item> items, String webUrl, String today) {
         List<String> parts = new ArrayList<>();
         StringBuilder buf = new StringBuilder();
 
-        for (String[] sec : SECTIONS) {
-            List<Item> sub = new ArrayList<>();
-            for (Item i : items) if (i.key().startsWith(sec[0])) sub.add(i);
-            if (sub.isEmpty()) continue;
-
-            String title = sec[1] + " " + sub.size() + "건";
-            String head = title + "\n" + RULE;
+        if (!items.isEmpty()) {
+            String title = "🏢 아파트 청약 " + items.size() + "건";
             boolean headPending = true;
-            for (Item it : sub) {
+            for (Item it : items) {
                 String body = withBadge(it, today);
-                String block = (headPending ? head + "\n\n" : "") + body;
+                String block = (headPending ? title + "\n" + RULE + "\n\n" : "") + body;
                 if (buf.length() > 0 && buf.length() + block.length() + 2 > LIMIT) {
                     parts.add(buf.toString());
                     buf.setLength(0);
-                    // 섹션 도중에 잘렸으면 새 덩어리에 머리말을 다시 단다.
+                    // 도중에 잘렸으면 새 덩어리에 머리말을 다시 단다.
                     if (!headPending) block = title + " (이어서)\n" + RULE + "\n\n" + body;
                 }
                 if (buf.length() > 0) buf.append("\n\n");
@@ -394,11 +390,10 @@ public class Cheongyak {
                 .append(htmlEsc(java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Seoul"))
                         .format(java.time.format.DateTimeFormatter
                                 .ofPattern("yyyy-MM-dd HH:mm"))))
-                .append(" KST · 아파트는 청약홈, 공모주는 38커뮤니케이션")
+                .append(" KST · 출처 청약홈")
                 .append(" · 접수 마감된 건은 빼고 보여줍니다</div>\n");
 
         section(b, "아파트", items, "apt:", today);   // 호출 쪽에서 정렬해서 넘긴다
-        section(b, "공모주", items, "ipo:", today);
 
         // 정적 페이지라 필터는 브라우저에서 보이고 숨기는 방식이다.
         // 시·군·구 목록은 실제로 실린 카드에서 만들어 빈 항목이 안 생기게 한다.
@@ -463,7 +458,6 @@ public class Cheongyak {
         boolean apt = prefix.equals("apt:");
         b.append("<h2>").append(title).append("</h2>\n");
         if (apt) {
-            // 공모주는 지역 개념이 없어 아파트에만 붙인다.
             b.append("""
                     <div class="filter">
                       <select id="sido"><option value="">시·도 전체</option></select>
@@ -580,14 +574,6 @@ public class Cheongyak {
         String today = LocalDate.now().toString();
         List<Item> items = new ArrayList<>();
 
-        // 한쪽 소스가 죽어도 다른 쪽은 알린다.
-        try {
-            List<Item> got = fetchIpo(today);
-            System.out.println("공모주: " + got.size() + "건 수집");
-            items.addAll(got);
-        } catch (Exception e) {
-            System.out.println("공모주: 수집 실패 - " + e);
-        }
         if (isBlank(aptKey)) {
             System.out.println("아파트: APPLYHOME_KEY 없음 - 건너뜀");
         } else {
@@ -727,22 +713,6 @@ public class Cheongyak {
     static void selftest() {
         String today = "2026-08-12";
 
-        String html = "<table summary=\"공모주 청약일정\"><tr><td>구분</td></tr>"
-                + "<tr><td>빅웨이브로보틱스</td><td>2026.09.16~09.17</td><td>-</td>"
-                + "<td>20,000~24,000</td><td></td><td>유진투자증권</td><td></td></tr>"
-                + "<tr><td>끝난청약</td><td>2026.04.20~04.21</td><td>-</td>"
-                + "<td>2,000~2,000</td><td></td><td>키움증권</td><td></td></tr>"
-                + "<tr><td>광고</td><td></td></tr></table>";
-        List<Item> ipo = parseIpo(html, today);
-        check(ipo.size() == 1, "광고/헤더 행 제외 + 끝난 청약 제외 (실제=" + ipo.size() + ")");
-        check(ipo.get(0).key().equals("ipo:빅웨이브로보틱스2026.09.16~09.17"), "공모주 키");
-        check(ipo.get(0).text().contains("유진투자증권")
-                && ipo.get(0).text().contains("20,000~24,000"), "공모주 본문");
-
-        // 공모주 종료일: 연도는 시작일에서, 연말을 넘기면 다음 해로
-        check(ipoEnd("2026.09.16~09.17").equals("2026-09-17"), "공모주 종료일");
-        check(ipoEnd("2026.12.30~01.02").equals("2027-01-02"), "연말 넘기면 다음 해");
-        check(ipoEnd("미정").isEmpty() && ipoEnd("2026.09.16~미정").isEmpty(), "형식 다르면 빈 값");
         check(!closed("", today), "종료일 모르면 버리지 않는다");
         check(closed("2026-08-11", today) && !closed("2026-08-12", today), "당일은 아직 안 끝났다");
 
@@ -769,12 +739,18 @@ public class Cheongyak {
         check(Arrays.asList(DEFAULT_REGIONS.split(",")).equals(List.of("서울", "경기", "인천")),
                 "기본 지역은 수도권 3곳");
 
+        // 분양가 (주택형별 상세에서 온다)
+        check(eok(124000).equals("12.4억") && eok(79831).equals("8.0억"), "만원 -> 억 변환");
+        check(priceRange(44812, 44555).equals("4.5억"), "반올림하면 같은 값은 하나만");
+        check(priceRange(73700, 299900).equals("7.4억 ~ 30.0억"), "다르면 범위로");
+        List<Item> priced = parseApt(recs, List.of("서울"), today, Map.of("1", "11.8억 ~ 14.5억"));
+        check(priced.get(0).text().contains("\n분양가 11.8억 ~ 14.5억\n"), "분양가 줄 삽입");
+        check(!seoul.get(0).text().contains("분양가"), "금액 없으면 그 줄 자체가 없다");
+
         check(esc("따\"옴\\표\n").equals("따\\\"옴\\\\표\\n"), "JSON 이스케이프");
         check(unescape("\\uD55C\\uAE00 \\\"인용\\\"").equals("한글 \"인용\""), "JSON 이스케이프 해제");
 
         // 정렬 키
-        check(ipo.get(0).start().equals("2026-09-16"), "공모주 청약 시작일 추출");
-        check(ipoDate("미정").isEmpty() && ipoDate("2026/09/16~09/17").isEmpty(), "형식 다르면 빈 값");
         check(seoul.get(0).start().equals("2026-08-01"), "접수시작일 없으면 공고일로 대체");
         check(parseApt(recs, List.of(), today).get(1).start().equals("2026-08-30"), "접수시작일 우선");
 
@@ -804,19 +780,15 @@ public class Cheongyak {
         // 수신자 여러 명
         check(splitCsv(" 111 ,222,, 333 ").equals(List.of("111", "222", "333")), "쉼표 목록 파싱");
         check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
-        // 메시지 구성: 종류별 머리말 + 하단 웹 주소
+        // 메시지 구성: 머리말 + 건수 + 하단 웹 주소
         List<Item> mixed = List.of(
                 new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "가나아파트\n서울"),
-                new Item("ipo:x", "2026-08-02", "2026-08-21", "", "", "가나전자\n청약일 ..."),
-                new Item("ipo:y", "2026-08-03", "2026-08-22", "", "", "다라전자\n청약일 ..."));
+                new Item("apt:2", "2026-08-02", "2026-08-21", "경기", "성남시", "다라아파트\n경기"));
         List<String> msg = compose(mixed, "https://example.com/", today);
         check(msg.size() == 1, "짧으면 한 통");
         String m = msg.get(0);
-        check(m.startsWith("🏢 아파트 1건"), "아파트 머리말이 먼저");
-        check(m.contains("📈 공모주 2건"), "공모주 머리말과 건수");
-        check(m.indexOf("🏢") < m.indexOf("📈"), "아파트 -> 공모주 순서");
+        check(m.startsWith("🏢 아파트 청약 2건"), "머리말과 건수");
         check(m.endsWith("웹 브라우저에서 보기\nhttps://example.com/"), "맨 끝에 웹 주소");
-        check(!m.contains("[아파트]") && !m.contains("[공모주]"), "말머리 중복 없음");
         check(!compose(mixed, "", today).get(0).contains("웹 브라우저에서 보기"),
                 "WEB_URL 없으면 링크 없음");
         check(compose(List.of(), "https://example.com/", today).isEmpty(), "보낼 게 없으면 빈 목록");
@@ -837,15 +809,16 @@ public class Cheongyak {
         check(gugunOf("세종특별자치시 다솜동 5204-1번지").isEmpty(), "시·군·구 단계가 없으면 빈 값");
         check(gugunOf("").isEmpty() && gugunOf("주소미상").isEmpty(), "형식 어긋나면 빈 값");
 
-        // 상한 초과 시 분할 + 잘린 섹션에 머리말 재부착
+        // 상한 초과 시 분할 + 잘린 덩어리에 머리말 재부착
         List<Item> many = new ArrayList<>();
         for (int i = 0; i < 200; i++) {
-            many.add(new Item("ipo:k" + i, "2026-01-01", "2026-12-31", "", "", "가".repeat(60)));
+            many.add(new Item("apt:k" + i, "2026-01-01", "2026-12-31", "서울", "중구",
+                    "가".repeat(60)));
         }
         List<String> parts = compose(many, "https://example.com/", today);
         check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
         for (String p : parts) check(p.length() <= LIMIT, "덩어리 크기 제한 (" + p.length() + ")");
-        check(parts.get(1).startsWith("📈 공모주 200건 (이어서)"), "이어지는 덩어리에 머리말 재부착");
+        check(parts.get(1).startsWith("🏢 아파트 청약 200건 (이어서)"), "이어지는 덩어리에 머리말 재부착");
         check(parts.get(parts.size() - 1).endsWith("https://example.com/"), "웹 주소는 마지막에 한 번");
 
         System.out.println("selftest OK");
