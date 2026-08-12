@@ -25,13 +25,17 @@
   .empty { color: #888; }
   .filter { display: flex; gap: 8px; align-items: center;
             flex-wrap: wrap; margin-bottom: 14px; }
+  /* Canvas/CanvasText 는 color-scheme 를 따라가는 시스템 색이다.
+     transparent + inherit 을 쓰면 펼친 목록이 OS 가 그리는 밝은 팝업인데
+     글자만 흰색을 물려받아 다크 모드에서 안 보인다. */
   .filter select { font: inherit; font-size: .9rem; padding: 5px 8px;
                    border-radius: 7px; border: 1px solid #8886;
-                   background: transparent; color: inherit; }
+                   background: Canvas; color: CanvasText; }
+  .filter select option { background: Canvas; color: CanvasText; }
   .filter #cnt { color: #888; font-size: .85rem; }
 </style>
 <h1>청약 알림</h1>
-<div class="sub">갱신 2026-08-12 14:51 KST · 아파트는 청약홈, 공모주는 38커뮤니케이션 · 접수 마감된 건은 빼고 보여줍니다</div>
+<div class="sub">갱신 2026-08-12 15:00 KST · 아파트는 청약홈, 공모주는 38커뮤니케이션 · 접수 마감된 건은 빼고 보여줍니다</div>
 <h2>아파트</h2>
 <div class="filter">
   <select id="sido"><option value="">시·도 전체</option></select>
