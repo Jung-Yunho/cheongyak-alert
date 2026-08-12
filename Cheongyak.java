@@ -71,10 +71,11 @@ public class Cheongyak {
      * end   청약 접수 종료일(ISO). 모르면 빈 문자열 — 이때는 마감 판정에서 제외하지 않는다
      * sido  시·도. 웹 페이지 필터용
      * gugun 시·군·구. 위와 같음. 주소에서 못 읽으면 빈 문자열
+     * addr  공급 주소. text 안에도 있지만, 페이지에서 이 줄만 지도 링크로 만들려고 따로 둔다
      * text  실제로 보낼 내용
      */
     record Item(String key, String start, String end,
-                String sido, String gugun, String text) {}
+                String sido, String gugun, String addr, String text) {}
 
     /** 0 = 접수 중(가장 급하다), 1 = 접수 예정. 마감된 건은 애초에 수집 단계에서 뺀다. */
     static int rank(Item it, String today) {
@@ -173,6 +174,35 @@ public class Cheongyak {
         return t[1].matches(".+[시군구]") ? t[1] : "";
     }
 
+    /**
+     * 지도 검색어. 공급 주소는 도로명이 아니라 지번 + 수식어라(수도권 231건 중 도로명은 16%)
+     * 그대로 넘기면 잘 못 찾는다. 그래서 검색을 방해하는 것만 걷어낸다.
+     *
+     *  - 괄호 안이 번지나 도로명이면 그쪽이 더 정확하다. 바깥은 택지지구·단지 이름인 경우가 많다.
+     *      "인천광역시 검단구 검단신도시 AB23BL(인천광역시 검단구 마전동 산175-7번지 일원)"
+     *      "경기도 오산시 오산세교2지구 A-13블록 호반써밋 라프리미어(경기도 오산시 초평중앙로 65)"
+     *  - 그 외의 괄호는 군더더기이므로 통째로 뗀다. 바깥이 이미 도로명인데 괄호 안이 지번인
+     *    경우가 여기 해당한다: "경기도 광주시 초월읍 도곡길 27(쌍동리 402)"
+     *  - "일원" / "일대" 는 행정 표현이라 검색에 방해만 된다.
+     *  - 복수 번지는 첫 번째만: "거여동 181, 202번지" -> "거여동 181번지"
+     *
+     * 번지가 아예 없는 건(약 30%)은 손댈 여지가 없어 원문 그대로 나간다. 그 경우 지도가
+     * 단지 정확한 위치 대신 동네 수준으로 잡히는데, 카드에 청약홈 공고 링크가 따로 있어
+     * 정확한 위치는 거기서 확인할 수 있다.
+     */
+    static final Pattern INNER_ADDR =
+            Pattern.compile("\\(([^()]*(?:번지|[로길]\\s?\\d)[^()]*)\\)");
+
+    static String mapQuery(String addr) {
+        String s = addr.trim();
+        Matcher m = INNER_ADDR.matcher(s);
+        if (m.find()) s = m.group(1);
+        else s = s.replaceAll("\\([^()]*\\)", "");
+        s = s.replaceAll("\\s*(일원|일대)\\s*", " ");
+        s = s.replaceAll("(\\d+)\\s*,\\s*\\d+(\\s*번지)", "$1$2");
+        return s.replaceAll("\\s+", " ").trim();
+    }
+
     static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions,
                                String today, String prefix) {
         return parseApt(recs, regions, today, prefix, Map.of());
@@ -210,8 +240,9 @@ public class Cheongyak {
             lines.add(prefix("당첨발표 ", win));
             lines.add(f(r, "PBLANC_URL"));
             lines.removeIf(String::isBlank);
+            String addr = f(r, "HSSPLY_ADRES");
             out.add(new Item(prefix + no, or(bgn, f(r, "RCRIT_PBLANC_DE")), end,
-                    area, gugunOf(f(r, "HSSPLY_ADRES")), String.join("\n", lines)));
+                    area, gugunOf(addr), addr, String.join("\n", lines)));
         }
         return out;
     }
@@ -500,9 +531,19 @@ public class Cheongyak {
                     .append("<b>").append(htmlEsc(head)).append("</b>");
             for (int i = 1; i < lines.length; i++) {
                 String l = lines[i];
-                b.append("<div>").append(l.startsWith("http")
-                        ? "<a href=\"" + htmlEsc(l) + "\">공고 보기</a>"
-                        : htmlEsc(l)).append("</div>");
+                String html;
+                if (l.startsWith("http")) {
+                    html = "<a href=\"" + htmlEsc(l) + "\">공고 보기</a>";
+                } else if (!it.addr().isEmpty() && l.equals(it.addr())) {
+                    // 주소는 지도 검색으로 연결한다. 좌표가 API 에 없어 지도를 직접 그리려면
+                    // 지오코딩 키가 하나 더 필요한데, 링크면 그 비용 없이 목적을 채운다.
+                    html = "<a href=\"https://map.kakao.com/?q="
+                            + htmlEsc(URLEncoder.encode(mapQuery(l), StandardCharsets.UTF_8))
+                            + "\" target=\"_blank\" rel=\"noopener\">" + htmlEsc(l) + "</a>";
+                } else {
+                    html = htmlEsc(l);
+                }
+                b.append("<div>").append(html).append("</div>");
             }
             b.append("</div>\n");
         }
@@ -784,11 +825,11 @@ public class Cheongyak {
         check(parseApt(recs, List.of(), today, "apt:").get(1).start().equals("2026-08-30"), "접수시작일 우선");
 
         // 상태 판정과 정렬: 접수 중(임박한 마감 순) 먼저, 그다음 예정(빨리 시작하는 순)
-        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "서울", "마포구", "오늘마감");
-        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "서울", "마포구", "내일마감");
-        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "경기", "성남시", "접수중");
-        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "경기", "", "곧시작");
-        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "인천", "연수구", "나중시작");
+        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "서울", "마포구", "", "오늘마감");
+        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "서울", "마포구", "", "내일마감");
+        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "경기", "성남시", "", "접수중");
+        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "경기", "", "", "곧시작");
+        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "인천", "연수구", "", "나중시작");
         check(badge(urgent, today)[2].equals("오늘 마감"), "오늘 마감 배지");
         check(badge(tmr, today)[2].equals("내일 마감"), "내일 마감 배지");
         check(badge(open, today)[2].equals("접수중"), "접수중 배지");
@@ -804,12 +845,28 @@ public class Cheongyak {
         check(htmlEsc("<a href=\"x\">&</a>")
                 .equals("&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;"), "HTML 이스케이프");
 
+        // 지도 검색어 정리
+        check(mapQuery("서울특별시 송파구 거여동 181, 202번지 일원")
+                .equals("서울특별시 송파구 거여동 181번지"), "복수 번지 -> 첫 번째, 일원 제거");
+        check(mapQuery("인천광역시 검단구 검단신도시 AB23BL(인천광역시 검단구 마전동 산175-7번지 일원)")
+                .equals("인천광역시 검단구 마전동 산175-7번지"), "괄호 안에 번지가 있으면 그쪽");
+        check(mapQuery("경기도 김포시 고촌읍 향산리 588-45번지 일원")
+                .equals("경기도 김포시 고촌읍 향산리 588-45번지"), "일원 제거");
+        check(mapQuery("서울특별시 노원구 월계동 487-17번지 일대")
+                .equals("서울특별시 노원구 월계동 487-17번지"), "일대 제거");
+        check(mapQuery("경기도 용인시 처인구 원삼면 일반산업단지 D1-1BL")
+                .equals("경기도 용인시 처인구 원삼면 일반산업단지 D1-1BL"), "번지 없으면 원문 유지");
+        check(mapQuery("경기도 오산시 오산세교2지구 A-13블록 호반써밋(경기도 오산시 초평중앙로 65)")
+                .equals("경기도 오산시 초평중앙로 65"), "괄호 안이 도로명이어도 그쪽");
+        check(mapQuery("경기도 광주시 초월읍 도곡길 27(쌍동리 402)")
+                .equals("경기도 광주시 초월읍 도곡길 27"), "바깥이 도로명이면 괄호를 뗀다");
+
         // 페이지는 소스(키 접두어)와 무관하게 전부 싣는다.
         // 한때 "apt:" 로만 걸러서 무순위 건이 페이지에서만 통째로 빠진 적이 있다.
         StringBuilder page = new StringBuilder();
         section(page, "아파트", List.of(
-                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "분양건\n서울"),
-                new Item("rem:2", "2026-08-01", "2026-08-20", "인천", "검단구", "무순위건\n인천")), today);
+                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "분양건\n서울"),
+                new Item("rem:2", "2026-08-01", "2026-08-20", "인천", "검단구", "", "무순위건\n인천")), today);
         check(page.indexOf("분양건") > 0 && page.indexOf("무순위건") > 0, "두 소스 모두 페이지에 실림");
         check(page.indexOf("data-sido=\"인천\" data-gugun=\"검단구\"") > 0, "무순위에도 필터 속성");
         check(argValue(List.of("--html", "docs/index.html"), "--html").equals("docs/index.html")
@@ -820,8 +877,8 @@ public class Cheongyak {
         check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
         // 메시지 구성: 머리말 + 건수 + 하단 웹 주소
         List<Item> mixed = List.of(
-                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "가나아파트\n서울"),
-                new Item("apt:2", "2026-08-02", "2026-08-21", "경기", "성남시", "다라아파트\n경기"));
+                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "가나아파트\n서울"),
+                new Item("apt:2", "2026-08-02", "2026-08-21", "경기", "성남시", "", "다라아파트\n경기"));
         List<String> msg = compose(mixed, "https://example.com/", today);
         check(msg.size() == 1, "짧으면 한 통");
         String m = msg.get(0);
@@ -835,8 +892,7 @@ public class Cheongyak {
         check(withBadge(urgent, today).startsWith("🔴 오늘 마감 · 오늘마감"), "메시지 배지 - 오늘 마감");
         check(withBadge(open, today).startsWith("🟢 접수중 · 접수중"), "메시지 배지 - 접수중");
         check(withBadge(soon1, today).startsWith("🟠 예정 · 곧시작"), "메시지 배지 - 예정");
-        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "서울", "중구",
-                "이름\n둘째줄\n셋째줄"), today)
+        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "서울", "중구", "", "이름\n둘째줄\n셋째줄"), today)
                 .endsWith("\n둘째줄\n셋째줄"), "첫 줄에만 붙고 나머지는 그대로");
         check(m.contains("🟢 접수중 · 가나아파트"), "실제 메시지에 배지 반영");
 
@@ -850,8 +906,7 @@ public class Cheongyak {
         // 상한 초과 시 분할 + 잘린 덩어리에 머리말 재부착
         List<Item> many = new ArrayList<>();
         for (int i = 0; i < 200; i++) {
-            many.add(new Item("apt:k" + i, "2026-01-01", "2026-12-31", "서울", "중구",
-                    "가".repeat(60)));
+            many.add(new Item("apt:k" + i, "2026-01-01", "2026-12-31", "서울", "중구", "", "가".repeat(60)));
         }
         List<String> parts = compose(many, "https://example.com/", today);
         check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
