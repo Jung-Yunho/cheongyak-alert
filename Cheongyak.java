@@ -420,13 +420,17 @@ public class Cheongyak {
                     });
                     return out.join('');
                   }
+                  // 시·도가 바뀌면 시·군·구는 항상 초기화한다. "남아 있으면 유지"로 두면
+                  // 규칙이 둘이 되어 예측이 안 되고, 무엇보다 시·도 없이 구만 남는 상태가
+                  // 생긴다. 중구는 서울과 인천에 모두 있어서 그러면 두 지역이 섞여 나온다.
+                  // 시·도가 전체일 때는 상자 자체를 숨긴다. 고를 수 없으면 헷갈릴 일도 없다.
                   function fillGugun() {
-                    var s = sido.value, keep = gugun.value;
+                    var s = sido.value;
                     gugun.innerHTML = options(cards.filter(function (c) {
                       return !s || c.dataset.sido === s;
                     }).map(function (c) { return c.dataset.gugun; }), '시·군·구 전체');
-                    gugun.value = keep;
-                    if (gugun.value !== keep) gugun.value = '';   // 시·도를 바꿔 사라졌으면 해제
+                    gugun.value = '';
+                    gugun.style.display = s ? '' : 'none';
                   }
                   function apply() {
                     var s = sido.value, g = gugun.value, n = 0;
