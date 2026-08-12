@@ -1,0 +1,46 @@
+name: 청약 알림
+
+on:
+  schedule:
+    # GitHub 의 cron 은 UTC 다. 00:00 UTC = 09:00 KST, 09:00 UTC = 18:00 KST.
+    # 예약 실행은 러너가 붐비면 수십 분 밀릴 수 있다. 이 용도엔 문제되지 않는다.
+    - cron: '0 0,9 * * *'
+  workflow_dispatch:        # Actions 탭에서 수동 실행
+
+permissions:
+  contents: write           # 결과(docs, seen.txt)를 저장소에 다시 커밋해야 한다
+
+concurrency:
+  group: cheongyak          # 겹쳐 돌면 push 가 충돌한다
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 수집 · 알림 · 페이지 생성
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          APPLYHOME_KEY: ${{ secrets.APPLYHOME_KEY }}
+          APT_REGIONS: ${{ vars.APT_REGIONS }}
+        run: |
+          java -Dfile.encoding=UTF-8 -Dcheongyak.dir=. \
+               Cheongyak.java --html docs/index.html
+
+      - name: 결과 커밋
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs seen.txt
+          # 바뀐 게 없으면 커밋하지 않는다. 없는 상태로 commit 하면 실패로 잡힌다.
+          git diff --cached --quiet && echo "변경 없음" && exit 0
+          git commit -m "청약 갱신 $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M')"
+          git push
