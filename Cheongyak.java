@@ -1,5 +1,5 @@
 /*
- * 청약 알림 - 아파트 청약(청약홈)의 신규 공고를 텔레그램으로 보낸다.
+ * 청약 알림 - 아파트 분양 + 무순위·잔여세대(청약홈)의 신규 공고를 텔레그램으로 보낸다.
  *
  * 빌드 불필요. JDK 11 이상이면 소스 파일을 그대로 실행한다.
  *   java Cheongyak.java             평소 실행 (작업 스케줄러에 등록)
@@ -9,7 +9,7 @@
  * 환경변수:
  *   TG_TOKEN       텔레그램 봇 토큰            (필수)
  *   TG_CHAT_ID     받을 채팅 ID. 쉼표로 여러 명 가능. 그룹은 음수 ID 하나면 된다 (필수)
- *   APPLYHOME_KEY  data.go.kr 개인 API 인증키  (없으면 아파트 건너뜀)
+ *   APPLYHOME_KEY  data.go.kr 개인 API 인증키  (필수)
  *   APT_REGIONS    지역 필터 (안 정하면 "서울,경기,인천". 전국을 보려면 "전국")
  *   WEB_URL        메시지 맨 끝에 붙일 웹 페이지 주소 (없으면 링크를 안 붙인다)
  *
@@ -41,11 +41,24 @@ import java.util.regex.Pattern;
 
 public class Cheongyak {
 
-    static final String APT_URL =
-            "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancDetail";
-    // 분양가는 분양정보가 아니라 주택형별 상세에 있다(주택형마다 값이 다르기 때문).
-    static final String MDL_URL =
-            "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancMdl";
+    static final String BASE = "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/";
+
+    /**
+     * 공고 종류마다 엔드포인트가 따로 있다. 분양정보(Detail)에는 금액이 없어
+     * 주택형별 상세(Mdl)를 한 번 더 부른다 — 주택형마다 분양가가 다르기 때문이다.
+     *
+     * label  로그에 찍을 이름
+     * prefix seen.txt 키 접두어. 두 소스의 공고번호가 겹쳐도 서로 안 섞이게 한다
+     */
+    record Source(String label, String detail, String mdl, String prefix) {}
+
+    static final Source[] SOURCES = {
+            new Source("아파트 분양", BASE + "getAPTLttotPblancDetail",
+                    BASE + "getAPTLttotPblancMdl", "apt:"),
+            // 무순위·잔여세대. 대부분 당일 접수(하루짜리)라 오히려 놓치기 쉽다.
+            new Source("무순위·잔여세대", BASE + "getRemndrLttotPblancDetail",
+                    BASE + "getRemndrLttotPblancMdl", "rem:"),
+    };
 
     // 청약홈 SUBSCRPT_AREA_CODE_NM 은 "서울" "경기" "인천" 처럼 짧은 표기다
     // ("서울특별시" 가 아니다). 실제 응답 1000건에서 확인한 값.
@@ -160,26 +173,33 @@ public class Cheongyak {
         return t[1].matches(".+[시군구]") ? t[1] : "";
     }
 
-    static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions, String today) {
-        return parseApt(recs, regions, today, Map.of());
+    static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions,
+                               String today, String prefix) {
+        return parseApt(recs, regions, today, prefix, Map.of());
     }
 
-    /** prices: 공고번호 -> "11.8억 ~ 14.5억". 없는 공고는 분양가 줄이 빠질 뿐이다. */
+    /**
+     * prices: 공고번호 -> "11.8억 ~ 14.5억". 없는 공고는 분양가 줄이 빠질 뿐이다.
+     *
+     * 접수일 필드명이 엔드포인트마다 다르다. 아파트 분양은 RCEPT_*, 무순위는 SUBSCRPT_RCEPT_*
+     * 를 쓰고 드물게 GNRL_RCEPT_* 만 채워진 건도 있다(실제 60건 중 2건). 그래서 순서대로 찾는다.
+     */
     static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions,
-                               String today, Map<String, String> prices) {
+                               String today, String prefix, Map<String, String> prices) {
         List<Item> out = new ArrayList<>();
         for (Map<String, String> r : recs) {
             String area = f(r, "SUBSCRPT_AREA_CODE_NM");
             if (!regions.isEmpty() && regions.stream().noneMatch(area::contains)) continue;
 
-            String end = f(r, "RCEPT_ENDDE");
+            String end = first(r, "RCEPT_ENDDE", "SUBSCRPT_RCEPT_ENDDE", "GNRL_RCEPT_ENDDE");
             // 이미 접수 마감된 공고는 알릴 이유가 없다. 날짜가 ISO 라 문자열 비교로 충분.
             if (closed(end, today)) continue;
 
             String no = f(r, "PBLANC_NO"), name = f(r, "HOUSE_NM");
             if (no.isEmpty() || name.isEmpty()) continue;
 
-            String bgn = f(r, "RCEPT_BGNDE"), win = f(r, "PRZWNER_PRESNATN_DE");
+            String bgn = first(r, "RCEPT_BGNDE", "SUBSCRPT_RCEPT_BGNDE", "GNRL_RCEPT_BGNDE");
+            String win = f(r, "PRZWNER_PRESNATN_DE");
             List<String> lines = new ArrayList<>();
             lines.add(name);
             lines.add(join(" · ", area, f(r, "HOUSE_SECD_NM")));
@@ -190,25 +210,26 @@ public class Cheongyak {
             lines.add(prefix("당첨발표 ", win));
             lines.add(f(r, "PBLANC_URL"));
             lines.removeIf(String::isBlank);
-            out.add(new Item("apt:" + no, or(bgn, f(r, "RCRIT_PBLANC_DE")), end,
+            out.add(new Item(prefix + no, or(bgn, f(r, "RCRIT_PBLANC_DE")), end,
                     area, gugunOf(f(r, "HSSPLY_ADRES")), String.join("\n", lines)));
         }
         return out;
     }
 
-    static List<Item> fetchApt(String key, List<String> regions, String today)
+    static List<Item> fetchSource(String key, Source src, List<String> regions, String today)
             throws IOException {
         // 공고일 최신순으로 내려오므로 앞쪽 200건이면 최근 몇 달을 덮는다.
-        String url = APT_URL + "?page=1&perPage=200&serviceKey="
+        String url = src.detail() + "?page=1&perPage=200&serviceKey="
                 + URLEncoder.encode(key, StandardCharsets.UTF_8);
         List<Map<String, String>> recs = parseRecords(new String(get(url), StandardCharsets.UTF_8));
 
         // 분양가는 공고마다 따로 조회해야 한다. 먼저 지역·마감 필터를 통과한 것만 추려서
         // 그만큼만 부른다(200건 전부 부르면 낭비다). 그래서 파싱을 두 번 한다 — 200건짜리
         // 문자열 처리라 비용은 무시할 만하고, 금액을 나중에 문자열에 끼워넣는 것보다 깔끔하다.
-        List<Item> first = parseApt(recs, regions, today);
-        Map<String, String> prices = fetchPrices(key, first);
-        return prices.isEmpty() ? first : parseApt(recs, regions, today, prices);
+        List<Item> first = parseApt(recs, regions, today, src.prefix());
+        Map<String, String> prices = fetchPrices(key, src, first);
+        return prices.isEmpty() ? first
+                : parseApt(recs, regions, today, src.prefix(), prices);
     }
 
     /**
@@ -218,12 +239,12 @@ public class Cheongyak {
      * 한 공고가 실패해도 나머지는 계속한다 — 분양가는 있으면 좋은 정보지 알림의 본질이 아니다.
      * 임대처럼 분양가가 없는 유형은 값이 안 잡혀 그냥 지도에서 빠진다.
      */
-    static Map<String, String> fetchPrices(String key, List<Item> items) {
+    static Map<String, String> fetchPrices(String key, Source src, List<Item> items) {
         Map<String, String> out = new LinkedHashMap<>();
         for (Item it : items) {
-            String no = it.key().substring("apt:".length());
+            String no = it.key().substring(src.prefix().length());
             try {
-                String url = MDL_URL + "?page=1&perPage=100"
+                String url = src.mdl() + "?page=1&perPage=100"
                         + "&serviceKey=" + URLEncoder.encode(key, StandardCharsets.UTF_8)
                         + "&" + URLEncoder.encode("cond[PBLANC_NO::EQ]", StandardCharsets.UTF_8)
                         + "=" + URLEncoder.encode(no, StandardCharsets.UTF_8);
@@ -574,16 +595,19 @@ public class Cheongyak {
         String today = LocalDate.now().toString();
         List<Item> items = new ArrayList<>();
 
+        String where = regions.isEmpty() ? "전국" : String.join(",", regions);
         if (isBlank(aptKey)) {
-            System.out.println("아파트: APPLYHOME_KEY 없음 - 건너뜀");
+            System.out.println("APPLYHOME_KEY 없음 - 수집을 건너뜁니다");
         } else {
-            try {
-                List<Item> got = fetchApt(aptKey, regions, today);
-                System.out.println("아파트: " + got.size() + "건 수집 ("
-                        + (regions.isEmpty() ? "전국" : String.join(",", regions)) + ")");
-                items.addAll(got);
-            } catch (Exception e) {
-                System.out.println("아파트: 수집 실패 - " + e);
+            // 한 소스가 죽어도 다른 소스는 알린다.
+            for (Source src : SOURCES) {
+                try {
+                    List<Item> got = fetchSource(aptKey, src, regions, today);
+                    System.out.println(src.label() + ": " + got.size() + "건 수집 (" + where + ")");
+                    items.addAll(got);
+                } catch (Exception e) {
+                    System.out.println(src.label() + ": 수집 실패 - " + e);
+                }
             }
         }
 
@@ -651,6 +675,15 @@ public class Cheongyak {
 
     static String or(String s, String alt) { return isBlank(s) ? alt : s; }
     static String f(Map<String, String> m, String k) { return or(m.get(k), "").trim(); }
+
+    /** 후보 필드명을 순서대로 보고 처음 값이 있는 것. 엔드포인트마다 이름이 달라서 필요하다. */
+    static String first(Map<String, String> m, String... keys) {
+        for (String k : keys) {
+            String v = f(m, k);
+            if (!v.isEmpty()) return v;
+        }
+        return "";
+    }
     static String prefix(String p, String v) { return v.isEmpty() ? "" : p + v; }
 
     static String join(String sep, String... parts) {
@@ -732,10 +765,10 @@ public class Cheongyak {
         check(recs.get(0).get("NSPRC_NM").isEmpty(), "null 을 빈 문자열로");
         check(recs.get(0).get("TOT_SUPLY_HSHLDCO").equals("594"), "숫자 값");
 
-        List<Item> seoul = parseApt(recs, List.of("서울"), today);
+        List<Item> seoul = parseApt(recs, List.of("서울"), today, "apt:");
         check(seoul.size() == 1 && seoul.get(0).key().equals("apt:1"), "지역+마감 필터");
-        check(parseApt(recs, List.of(), today).size() == 2, "필터 없어도 마감건/번호없는건 제외");
-        check(parseApt(recs, List.of("서울", "경기", "인천"), today).size() == 1, "여러 지역 OR 매칭");
+        check(parseApt(recs, List.of(), today, "apt:").size() == 2, "필터 없어도 마감건/번호없는건 제외");
+        check(parseApt(recs, List.of("서울", "경기", "인천"), today, "apt:").size() == 1, "여러 지역 OR 매칭");
         check(Arrays.asList(DEFAULT_REGIONS.split(",")).equals(List.of("서울", "경기", "인천")),
                 "기본 지역은 수도권 3곳");
 
@@ -743,7 +776,8 @@ public class Cheongyak {
         check(eok(124000).equals("12.4억") && eok(79831).equals("8.0억"), "만원 -> 억 변환");
         check(priceRange(44812, 44555).equals("4.5억"), "반올림하면 같은 값은 하나만");
         check(priceRange(73700, 299900).equals("7.4억 ~ 30.0억"), "다르면 범위로");
-        List<Item> priced = parseApt(recs, List.of("서울"), today, Map.of("1", "11.8억 ~ 14.5억"));
+        List<Item> priced = parseApt(recs, List.of("서울"), today, "apt:",
+                Map.of("1", "11.8억 ~ 14.5억"));
         check(priced.get(0).text().contains("\n분양가 11.8억 ~ 14.5억\n"), "분양가 줄 삽입");
         check(!seoul.get(0).text().contains("분양가"), "금액 없으면 그 줄 자체가 없다");
 
@@ -752,7 +786,7 @@ public class Cheongyak {
 
         // 정렬 키
         check(seoul.get(0).start().equals("2026-08-01"), "접수시작일 없으면 공고일로 대체");
-        check(parseApt(recs, List.of(), today).get(1).start().equals("2026-08-30"), "접수시작일 우선");
+        check(parseApt(recs, List.of(), today, "apt:").get(1).start().equals("2026-08-30"), "접수시작일 우선");
 
         // 상태 판정과 정렬: 접수 중(임박한 마감 순) 먼저, 그다음 예정(빨리 시작하는 순)
         Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "서울", "마포구", "오늘마감");
