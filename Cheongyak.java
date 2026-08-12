@@ -186,52 +186,33 @@ public class Cheongyak {
      *  - "일원" / "일대" 는 행정 표현이라 검색에 방해만 된다.
      *  - 복수 번지는 첫 번째만: "거여동 181, 202번지" -> "거여동 181번지"
      *
-     * 번지도 도로명도 없는 건(약 30%)은 그대로 넘기면 검색이 **0건**으로 끝나고, 카카오맵이
-     * 직전에 보던 엉뚱한 위치를 그대로 띄운다. 위치를 오해하게 만드는 건 못 찾는 것보다 나쁘다.
-     * 그래서 그럴 때는 행정구역까지만 남긴다:
-     *   "경기도 용인시 처인구 원삼면 용인 반도체 클러스터 일반산업단지 D1-1BL"
-     *     -> "경기도 용인시 처인구 원삼면"
-     * 단지 위치까지는 못 짚어도 최소한 맞는 동네가 잡힌다. 정확한 위치는 카드의
-     * 청약홈 공고 링크에서 확인할 수 있다.
+     *  - 블록 코드("D1-1BL", "A-5블록")는 지도에 없는 표기라 이것만으로 검색이 통째로
+     *    실패한다. 떼면 남는 지구·단지명으로 정확히 찾힌다(둘 다 카카오맵에서 확인):
+     *      "…원삼면 용인 반도체 클러스터 일반산업단지 D1-1BL"
+     *        -> "…원삼면 용인 반도체 클러스터 일반산업단지"  (장소 1건)
+     *      "…거모동, 군자동 시흥거모 공공주택지구 내 A-5블록"
+     *        -> "…거모동, 군자동 시흥거모 공공주택지구"      (장소 1건)
+     *
+     * 번지가 없어도 지구·단지명이 남으면 그게 행정구역보다 정확하므로 그대로 쓴다.
+     * 정확한 위치는 카드의 청약홈 공고 링크에서도 확인할 수 있다.
      */
     static final Pattern INNER_ADDR =
             Pattern.compile("\\(([^()]*(?:번지|[로길]\\s?\\d)[^()]*)\\)");
 
-    /**
-     * 번지나 도로명이 들어 있는가. 없으면 지도 검색이 통째로 실패한다.
-     * 지번("81-8")과 블록 코드("D1-1BL")를 구별해야 해서 숫자-숫자 앞뒤에 영문이 붙으면 뺀다.
-     */
-    static final Pattern PINPOINT =
-            Pattern.compile("번지|(?<![A-Za-z])\\d+-\\d+(?![A-Za-z])|[로길]\\s?\\d");
+    /** "D1-1BL", "A-5블록", "AB23BL" 같은 블록 지정. 지도에 없는 표기다. */
+    static final Pattern BLOCK =
+            Pattern.compile("\\s*\\(?[A-Za-z]{1,3}-?\\d+(?:-\\d+)?\\s*(?:BL|블록)\\)?");
 
     static String mapQuery(String addr) {
         String s = addr.trim();
         Matcher m = INNER_ADDR.matcher(s);
         if (m.find()) s = m.group(1);
         else s = s.replaceAll("\\([^()]*\\)", "");
+        s = BLOCK.matcher(s).replaceAll("");
         s = s.replaceAll("\\s*(일원|일대)\\s*", " ");
         s = s.replaceAll("(\\d+)\\s*,\\s*\\d+(\\s*번지)", "$1$2");
-        s = s.replaceAll("\\s+", " ").trim();
-
-        if (PINPOINT.matcher(s).find()) return s;
-        String admin = adminOnly(s);
-        return admin.isEmpty() ? s : admin;
-    }
-
-    /**
-     * 앞에서부터 행정구역 토큰만 모은다. 시/도/군/구는 계속 이어가고,
-     * 읍/면/동/리를 만나면 그게 최말단이므로 거기서 끊는다.
-     *   "경기도 시흥시 거모동, 군자동 시흥거모 공공주택지구 내 A-5블록" -> "경기도 시흥시 거모동"
-     */
-    static String adminOnly(String s) {
-        List<String> out = new ArrayList<>();
-        for (String raw : s.split("\\s+")) {
-            String t = raw.replaceAll("[,.()]+$", "");
-            if (t.matches(".+[시도군구]")) { out.add(t); continue; }
-            if (t.matches(".+[읍면동리]")) { out.add(t); break; }
-            break;
-        }
-        return String.join(" ", out);
+        s = s.replaceAll("\\s+내\\s*$", "");   // "…지구 내" 처럼 남는 조사
+        return s.replaceAll("\\s+", " ").trim();
     }
 
     static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions,
@@ -885,15 +866,15 @@ public class Cheongyak {
                 .equals("경기도 김포시 고촌읍 향산리 588-45번지"), "일원 제거");
         check(mapQuery("서울특별시 노원구 월계동 487-17번지 일대")
                 .equals("서울특별시 노원구 월계동 487-17번지"), "일대 제거");
-        // 번지도 도로명도 없으면 그대로는 검색 0건이 된다 -> 행정구역까지만
+        // 블록 코드만 떼면 지구·단지명으로 찾힌다 (둘 다 카카오맵에서 장소 1건 확인)
         check(mapQuery("경기도 용인시 처인구 원삼면 용인 반도체 클러스터 일반산업단지 D1-1BL")
-                .equals("경기도 용인시 처인구 원삼면"), "번지 없으면 행정구역까지만");
+                .equals("경기도 용인시 처인구 원삼면 용인 반도체 클러스터 일반산업단지"), "블록 코드 제거");
         check(mapQuery("경기도 시흥시 거모동, 군자동 시흥거모 공공주택지구 내 A-5블록")
-                .equals("경기도 시흥시 거모동"), "동은 최말단이라 첫 동에서 끊는다");
-        // "검단신도시" 도 시로 끝나 남는데, 실제로 검색되는 지명이라 구까지만 자르는 것보다 낫다
+                .equals("경기도 시흥시 거모동, 군자동 시흥거모 공공주택지구"), "블록 + 남는 '내' 제거");
         check(mapQuery("인천광역시 검단구 검단신도시 AB23BL")
-                .equals("인천광역시 검단구 검단신도시"), "지구명이 시로 끝나면 그대로 살린다");
-        check(adminOnly("D1-1BL 뭐시기").isEmpty(), "행정구역으로 시작하지 않으면 빈 값");
+                .equals("인천광역시 검단구 검단신도시"), "BL 접미 블록 코드");
+        check(mapQuery("경기도 성남시 수정구 신흥동 81-8")
+                .equals("경기도 성남시 수정구 신흥동 81-8"), "지번은 블록 코드로 오인하지 않는다");
         check(mapQuery("경기도 오산시 오산세교2지구 A-13블록 호반써밋(경기도 오산시 초평중앙로 65)")
                 .equals("경기도 오산시 초평중앙로 65"), "괄호 안이 도로명이어도 그쪽");
         check(mapQuery("경기도 광주시 초월읍 도곡길 27(쌍동리 402)")
