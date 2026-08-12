@@ -52,11 +52,35 @@ public class Cheongyak {
 
     /**
      * 알림 한 건.
-     * key  중복 판단용
-     * date 정렬용 청약 시작일(ISO). 모르면 빈 문자열
-     * text 실제로 보낼 내용
+     * key   중복 판단용
+     * start 청약 접수 시작일(ISO). 모르면 빈 문자열
+     * end   청약 접수 종료일(ISO). 모르면 빈 문자열 — 이때는 마감 판정에서 제외하지 않는다
+     * text  실제로 보낼 내용
      */
-    record Item(String key, String date, String text) {}
+    record Item(String key, String start, String end, String text) {}
+
+    /** 0 = 접수 중(가장 급하다), 1 = 접수 예정. 마감된 건은 애초에 수집 단계에서 뺀다. */
+    static int rank(Item it, String today) {
+        return !it.start().isEmpty() && it.start().compareTo(today) > 0 ? 1 : 0;
+    }
+
+    /** 마감일이 지났는가. 종료일을 모르면 함부로 버리지 않는다. */
+    static boolean closed(String end, String today) {
+        return !end.isEmpty() && end.compareTo(today) < 0;
+    }
+
+    /** 접수 중 먼저(임박한 마감 순), 그다음 예정(빨리 시작하는 순). */
+    static List<Item> sortForDisplay(List<Item> items, String today) {
+        List<Item> out = new ArrayList<>(items);
+        out.sort((x, y) -> {
+            int r = Integer.compare(rank(x, today), rank(y, today));
+            if (r != 0) return r;
+            return rank(x, today) == 0
+                    ? x.end().compareTo(y.end())        // 곧 마감하는 것부터
+                    : x.start().compareTo(y.start());   // 곧 시작하는 것부터
+        });
+        return out;
+    }
 
     // ---------- HTTP ----------
     //
@@ -97,7 +121,7 @@ public class Cheongyak {
     static final Pattern CELL = Pattern.compile("<td[^>]*>(.*?)</td>", Pattern.DOTALL);
     static final Pattern TAG = Pattern.compile("<[^>]+>");
 
-    static List<Item> parseIpo(String html) {
+    static List<Item> parseIpo(String html, String today) {
         List<Item> out = new ArrayList<>();
         int from = html.indexOf("summary=\"공모주 청약일정\"");
         if (from < 0) return out;
@@ -113,8 +137,10 @@ public class Cheongyak {
             }
             // 헤더 / 광고 / 빈 행 걸러내기: 청약일 칸에 "~" 가 있는 행만 진짜 데이터다.
             if (c.size() < 6 || c.get(0).isEmpty() || !c.get(1).contains("~")) continue;
+            String bgn = ipoDate(c.get(1)), end = ipoEnd(c.get(1));
+            if (closed(end, today)) continue;   // 이미 끝난 청약은 싣지 않는다
             // 말머리(종류)는 메시지 머리말과 페이지 섹션이 이미 알려주므로 붙이지 않는다.
-            out.add(new Item("ipo:" + c.get(0) + c.get(1), ipoDate(c.get(1)), String.join("\n",
+            out.add(new Item("ipo:" + c.get(0) + c.get(1), bgn, end, String.join("\n",
                     c.get(0),
                     "청약일 " + c.get(1),
                     "공모가 " + or(c.get(3), "-"),
@@ -130,8 +156,24 @@ public class Cheongyak {
         return d.matches("\\d{4}-\\d{2}-\\d{2}") ? d : "";
     }
 
-    static List<Item> fetchIpo() throws IOException {
-        return parseIpo(new String(get(IPO_URL), Charset.forName("EUC-KR")));
+    /**
+     * "2026.09.16~09.17" 의 뒤쪽 종료일을 ISO 로. 연도는 시작일에서 가져온다.
+     * "2026.12.30~01.02" 처럼 연말을 넘기면 다음 해로 넘긴다.
+     * 형식이 다르면 빈 문자열 — 그러면 마감 판정에서 제외되어 살아남는다(버리는 쪽이 더 위험).
+     */
+    static String ipoEnd(String range) {
+        String bgn = ipoDate(range);
+        int i = range.indexOf('~');
+        if (bgn.isEmpty() || i < 0) return "";
+        String md = range.substring(i + 1).trim().replace('.', '-');
+        if (!md.matches("\\d{2}-\\d{2}")) return "";
+        int year = Integer.parseInt(bgn.substring(0, 4));
+        if (md.compareTo(bgn.substring(5)) < 0) year++;   // 12월 -> 1월
+        return year + "-" + md;
+    }
+
+    static List<Item> fetchIpo(String today) throws IOException {
+        return parseIpo(new String(get(IPO_URL), Charset.forName("EUC-KR")), today);
     }
 
     // ---------- 아파트 (청약홈) ----------
@@ -169,7 +211,7 @@ public class Cheongyak {
 
             String end = f(r, "RCEPT_ENDDE");
             // 이미 접수 마감된 공고는 알릴 이유가 없다. 날짜가 ISO 라 문자열 비교로 충분.
-            if (!end.isEmpty() && end.compareTo(today) < 0) continue;
+            if (closed(end, today)) continue;
 
             String no = f(r, "PBLANC_NO"), name = f(r, "HOUSE_NM");
             if (no.isEmpty() || name.isEmpty()) continue;
@@ -184,7 +226,7 @@ public class Cheongyak {
             lines.add(prefix("당첨발표 ", win));
             lines.add(f(r, "PBLANC_URL"));
             lines.removeIf(String::isBlank);
-            out.add(new Item("apt:" + no, or(bgn, f(r, "RCRIT_PBLANC_DE")),
+            out.add(new Item("apt:" + no, or(bgn, f(r, "RCRIT_PBLANC_DE")), end,
                     String.join("\n", lines)));
         }
         return out;
@@ -290,11 +332,7 @@ public class Cheongyak {
     // GitHub Actions 가 수집한 결과를 여기서 HTML 로 떨궈 Pages 가 그대로 서빙한다.
     // 브라우저가 직접 API 를 호출하지 않으므로 CORS 도, 키 노출도 없다.
 
-    static void writeHtml(Path out, List<Item> items) throws IOException {
-        // 날짜 내림차순 = 다가오는 청약이 위로, 지난 건은 아래로.
-        List<Item> sorted = new ArrayList<>(items);
-        sorted.sort((x, y) -> y.date().compareTo(x.date()));
-
+    static void writeHtml(Path out, List<Item> items, String today) throws IOException {
         StringBuilder b = new StringBuilder();
         b.append("""
                 <!DOCTYPE html>
@@ -314,8 +352,13 @@ public class Cheongyak {
                   .card b { display: block; margin-bottom: 6px; font-size: 1.02rem; }
                   .card div { color: #777; font-size: .9rem; }
                   .card a { word-break: break-all; }
-                  .soon { border-color: #e8a33d; background: #e8a33d18; }
-                  .tag { float: right; font-size: .75rem; color: #e8a33d; font-weight: 600; }
+                  .open { border-color: #3da35d; background: #3da35d14; }
+                  .urgent { border-color: #d94f4f; background: #d94f4f18; }
+                  .tag { float: right; font-size: .75rem; font-weight: 700;
+                         margin-left: 8px; white-space: nowrap; }
+                  .t-urgent { color: #d94f4f; }
+                  .t-open { color: #3da35d; }
+                  .t-soon { color: #e8a33d; }
                   .empty { color: #888; }
                 </style>
                 """);
@@ -323,11 +366,11 @@ public class Cheongyak {
                 .append(htmlEsc(java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Seoul"))
                         .format(java.time.format.DateTimeFormatter
                                 .ofPattern("yyyy-MM-dd HH:mm"))))
-                .append(" KST · 아파트는 청약홈, 공모주는 38커뮤니케이션</div>\n");
+                .append(" KST · 아파트는 청약홈, 공모주는 38커뮤니케이션")
+                .append(" · 접수 마감된 건은 빼고 보여줍니다</div>\n");
 
-        String today = LocalDate.now().toString();
-        section(b, "아파트", sorted, "apt:", today);
-        section(b, "공모주", sorted, "ipo:", today);
+        section(b, "아파트", items, "apt:", today);   // 호출 쪽에서 정렬해서 넘긴다
+        section(b, "공모주", items, "ipo:", today);
 
         Path parent = out.toAbsolutePath().getParent();
         if (parent != null) Files.createDirectories(parent);
@@ -344,10 +387,11 @@ public class Cheongyak {
             any = true;
             String[] lines = it.text().split("\n");
             String head = lines[0];   // 첫 줄이 이름
-            boolean soon = !it.date().isEmpty() && it.date().compareTo(today) >= 0;
-            b.append("<div class=\"card").append(soon ? " soon" : "").append("\">");
-            if (soon) b.append("<span class=\"tag\">예정</span>");
-            b.append("<b>").append(htmlEsc(head)).append("</b>");
+            String[] s = badge(it, today);   // [카드 클래스, 태그 클래스, 문구]
+            b.append("<div class=\"card ").append(s[0]).append("\">")
+                    .append("<span class=\"tag ").append(s[1]).append("\">")
+                    .append(s[2]).append("</span>")
+                    .append("<b>").append(htmlEsc(head)).append("</b>");
             for (int i = 1; i < lines.length; i++) {
                 String l = lines[i];
                 b.append("<div>").append(l.startsWith("http")
@@ -357,6 +401,20 @@ public class Cheongyak {
             b.append("</div>\n");
         }
         if (!any) b.append("<p class=\"empty\">수집된 건이 없습니다.</p>\n");
+    }
+
+    /**
+     * 상태 배지. [카드 클래스, 태그 클래스, 문구].
+     * 마감된 건은 수집 단계에서 이미 빠지므로 여기서는 다루지 않는다.
+     */
+    static String[] badge(Item it, String today) {
+        if (rank(it, today) == 1) return new String[]{"", "t-soon", "예정"};
+        String tomorrow = LocalDate.parse(today).plusDays(1).toString();
+        if (!it.end().isEmpty() && it.end().compareTo(tomorrow) <= 0) {
+            return new String[]{"urgent", "t-urgent",
+                    it.end().equals(today) ? "오늘 마감" : "내일 마감"};
+        }
+        return new String[]{"open", "t-open", "접수중"};
     }
 
     static String htmlEsc(String s) {
@@ -418,7 +476,7 @@ public class Cheongyak {
 
         // 한쪽 소스가 죽어도 다른 쪽은 알린다.
         try {
-            List<Item> got = fetchIpo();
+            List<Item> got = fetchIpo(today);
             System.out.println("공모주: " + got.size() + "건 수집");
             items.addAll(got);
         } catch (Exception e) {
@@ -437,6 +495,9 @@ public class Cheongyak {
             }
         }
 
+        // 접수 중인 것(임박한 마감 순)을 먼저, 그다음 예정. 페이지와 메시지가 같은 순서를 쓴다.
+        items = sortForDisplay(items, today);
+
         // 페이지는 중복 판정과 무관하게 "지금 열려 있는 전부"를 보여준다.
         String htmlPath = argValue(a, "--html");
         if (htmlPath != null) {
@@ -446,7 +507,7 @@ public class Cheongyak {
                 System.err.println("수집 0건. 페이지를 덮어쓰지 않고 실패로 끝냅니다.");
                 System.exit(1);
             }
-            writeHtml(Paths.get(htmlPath), items);
+            writeHtml(Paths.get(htmlPath), items, today);
         }
 
         Set<String> seen = loadSeen();
@@ -558,15 +619,26 @@ public class Cheongyak {
     }
 
     static void selftest() {
+        String today = "2026-08-12";
+
         String html = "<table summary=\"공모주 청약일정\"><tr><td>구분</td></tr>"
                 + "<tr><td>빅웨이브로보틱스</td><td>2026.09.16~09.17</td><td>-</td>"
                 + "<td>20,000~24,000</td><td></td><td>유진투자증권</td><td></td></tr>"
+                + "<tr><td>끝난청약</td><td>2026.04.20~04.21</td><td>-</td>"
+                + "<td>2,000~2,000</td><td></td><td>키움증권</td><td></td></tr>"
                 + "<tr><td>광고</td><td></td></tr></table>";
-        List<Item> ipo = parseIpo(html);
-        check(ipo.size() == 1, "광고/헤더 행 제외");
+        List<Item> ipo = parseIpo(html, today);
+        check(ipo.size() == 1, "광고/헤더 행 제외 + 끝난 청약 제외 (실제=" + ipo.size() + ")");
         check(ipo.get(0).key().equals("ipo:빅웨이브로보틱스2026.09.16~09.17"), "공모주 키");
         check(ipo.get(0).text().contains("유진투자증권")
                 && ipo.get(0).text().contains("20,000~24,000"), "공모주 본문");
+
+        // 공모주 종료일: 연도는 시작일에서, 연말을 넘기면 다음 해로
+        check(ipoEnd("2026.09.16~09.17").equals("2026-09-17"), "공모주 종료일");
+        check(ipoEnd("2026.12.30~01.02").equals("2027-01-02"), "연말 넘기면 다음 해");
+        check(ipoEnd("미정").isEmpty() && ipoEnd("2026.09.16~미정").isEmpty(), "형식 다르면 빈 값");
+        check(!closed("", today), "종료일 모르면 버리지 않는다");
+        check(closed("2026-08-11", today) && !closed("2026-08-12", today), "당일은 아직 안 끝났다");
 
         String json = "{\"currentCount\":4,\"data\":["
                 + "{\"PBLANC_NO\":\"1\",\"HOUSE_NM\":\"가나\",\"SUBSCRPT_AREA_CODE_NM\":\"서울\","
@@ -584,7 +656,6 @@ public class Cheongyak {
         check(recs.get(0).get("NSPRC_NM").isEmpty(), "null 을 빈 문자열로");
         check(recs.get(0).get("TOT_SUPLY_HSHLDCO").equals("594"), "숫자 값");
 
-        String today = "2026-08-12";
         List<Item> seoul = parseApt(recs, List.of("서울"), today);
         check(seoul.size() == 1 && seoul.get(0).key().equals("apt:1"), "지역+마감 필터");
         check(parseApt(recs, List.of(), today).size() == 2, "필터 없어도 마감건/번호없는건 제외");
@@ -596,10 +667,29 @@ public class Cheongyak {
         check(unescape("\\uD55C\\uAE00 \\\"인용\\\"").equals("한글 \"인용\""), "JSON 이스케이프 해제");
 
         // 정렬 키
-        check(ipo.get(0).date().equals("2026-09-16"), "공모주 청약 시작일 추출");
+        check(ipo.get(0).start().equals("2026-09-16"), "공모주 청약 시작일 추출");
         check(ipoDate("미정").isEmpty() && ipoDate("2026/09/16~09/17").isEmpty(), "형식 다르면 빈 값");
-        check(seoul.get(0).date().equals("2026-08-01"), "접수시작일 없으면 공고일로 대체");
-        check(parseApt(recs, List.of(), today).get(1).date().equals("2026-08-30"), "접수시작일 우선");
+        check(seoul.get(0).start().equals("2026-08-01"), "접수시작일 없으면 공고일로 대체");
+        check(parseApt(recs, List.of(), today).get(1).start().equals("2026-08-30"), "접수시작일 우선");
+
+        // 상태 판정과 정렬: 접수 중(임박한 마감 순) 먼저, 그다음 예정(빨리 시작하는 순)
+        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "오늘마감");
+        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "내일마감");
+        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "접수중");
+        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "곧시작");
+        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "나중시작");
+        check(badge(urgent, today)[2].equals("오늘 마감"), "오늘 마감 배지");
+        check(badge(tmr, today)[2].equals("내일 마감"), "내일 마감 배지");
+        check(badge(open, today)[2].equals("접수중"), "접수중 배지");
+        check(badge(soon1, today)[2].equals("예정"), "예정 배지");
+        check(badge(urgent, today)[0].equals("urgent") && badge(open, today)[0].equals("open"),
+                "카드 강조 클래스");
+
+        List<Item> order = sortForDisplay(List.of(soon2, open, soon1, urgent, tmr), today);
+        List<String> keys = new ArrayList<>();
+        for (Item i : order) keys.add(i.key());
+        check(keys.equals(List.of("apt:u", "apt:t", "apt:o", "apt:s1", "apt:s2")),
+                "접수중(마감임박순) -> 예정(시작순) 정렬, 실제=" + keys);
         check(htmlEsc("<a href=\"x\">&</a>")
                 .equals("&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;"), "HTML 이스케이프");
         check(argValue(List.of("--html", "docs/index.html"), "--html").equals("docs/index.html")
@@ -609,9 +699,9 @@ public class Cheongyak {
         check(splitCsv(" 111 ,222,, 333 ").equals(List.of("111", "222", "333")), "쉼표 목록 파싱");
         check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
         // 메시지 구성: 종류별 머리말 + 하단 웹 주소
-        List<Item> mixed = List.of(new Item("apt:1", "2026-08-01", "가나아파트\n서울"),
-                new Item("ipo:x", "2026-08-02", "가나전자\n청약일 ..."),
-                new Item("ipo:y", "2026-08-03", "다라전자\n청약일 ..."));
+        List<Item> mixed = List.of(new Item("apt:1", "2026-08-01", "2026-08-20", "가나아파트\n서울"),
+                new Item("ipo:x", "2026-08-02", "2026-08-21", "가나전자\n청약일 ..."),
+                new Item("ipo:y", "2026-08-03", "2026-08-22", "다라전자\n청약일 ..."));
         List<String> msg = compose(mixed, "https://example.com/");
         check(msg.size() == 1, "짧으면 한 통");
         String m = msg.get(0);
@@ -625,7 +715,9 @@ public class Cheongyak {
 
         // 상한 초과 시 분할 + 잘린 섹션에 머리말 재부착
         List<Item> many = new ArrayList<>();
-        for (int i = 0; i < 200; i++) many.add(new Item("ipo:k" + i, "2026-01-01", "가".repeat(60)));
+        for (int i = 0; i < 200; i++) {
+            many.add(new Item("ipo:k" + i, "2026-01-01", "2026-12-31", "가".repeat(60)));
+        }
         List<String> parts = compose(many, "https://example.com/");
         check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
         for (String p : parts) check(p.length() <= LIMIT, "덩어리 크기 제한 (" + p.length() + ")");
