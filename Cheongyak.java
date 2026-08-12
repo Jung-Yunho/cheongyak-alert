@@ -8,7 +8,7 @@
  *
  * 환경변수:
  *   TG_TOKEN       텔레그램 봇 토큰            (필수)
- *   TG_CHAT_ID     받을 채팅 ID                (필수)
+ *   TG_CHAT_ID     받을 채팅 ID. 쉼표로 여러 명 가능. 그룹은 음수 ID 하나면 된다 (필수)
  *   APPLYHOME_KEY  data.go.kr 개인 API 인증키  (없으면 아파트 건너뜀)
  *   APT_REGIONS    지역 필터 (안 정하면 "서울,경기,인천". 전국을 보려면 "전국")
  *
@@ -215,18 +215,43 @@ public class Cheongyak {
         }
     }
 
-    /** 텔레그램 메시지는 4096자 제한이라 묶어 보내되 넘치면 나눈다. */
-    static void sendAll(String token, String chatId, List<Item> items) throws IOException {
+    /** 텔레그램 메시지는 4096자 제한이라 미리 덩어리로 나눠둔다. */
+    static List<String> chunk(List<Item> items) {
+        List<String> parts = new ArrayList<>();
         StringBuilder buf = new StringBuilder();
         for (Item it : items) {
             if (buf.length() > 0 && buf.length() + it.text().length() + 2 > 3800) {
-                send(token, chatId, buf.toString());
+                parts.add(buf.toString());
                 buf.setLength(0);
             }
             if (buf.length() > 0) buf.append("\n\n");
             buf.append(it.text());
         }
-        if (buf.length() > 0) send(token, chatId, buf.toString());
+        if (buf.length() > 0) parts.add(buf.toString());
+        return parts;
+    }
+
+    /**
+     * 수신자 여러 명에게 보낸다.
+     *
+     * 한 명이 실패해도(예: 그 사람이 봇에게 START 를 안 눌렀다) 나머지는 계속 보낸다.
+     * 전원 실패일 때만 예외를 던져 seen.txt 기록을 막는다 — 그래야 다음 실행에 다시 시도한다.
+     * 일부만 실패한 경우 기록은 남긴다. 안 그러면 성공한 사람이 같은 알림을 계속 다시 받는다.
+     */
+    static void sendAll(String token, List<String> chatIds, List<Item> items) throws IOException {
+        List<String> parts = chunk(items);
+        List<String> failed = new ArrayList<>();
+        for (String id : chatIds) {
+            try {
+                for (String p : parts) send(token, id, p);
+            } catch (IOException e) {
+                failed.add(id + " → " + e.getMessage());
+            }
+        }
+        if (failed.size() == chatIds.size()) {
+            throw new IOException("수신자 전원 전송 실패: " + String.join(" / ", failed));
+        }
+        for (String s : failed) System.out.println("전송 실패(건너뜀): " + s);
     }
 
     // ---------- 정적 페이지 ----------
@@ -345,16 +370,15 @@ public class Cheongyak {
         List<String> a = Arrays.asList(args);
         if (a.contains("--selftest")) { selftest(); return; }
 
-        String token = System.getenv("TG_TOKEN"), chat = System.getenv("TG_CHAT_ID");
+        String token = System.getenv("TG_TOKEN");
+        List<String> chats = splitCsv(System.getenv("TG_CHAT_ID"));   // 쉼표로 여러 명
         String aptKey = System.getenv("APPLYHOME_KEY");
         // 기본은 수도권만. 전국을 보려면 APT_REGIONS=전국 으로 둔다.
         String regionEnv = or(System.getenv("APT_REGIONS"), DEFAULT_REGIONS);
-        List<String> regions = new ArrayList<>();
-        if (!regionEnv.trim().equals("전국")) {
-            for (String g : regionEnv.split(",")) if (!g.isBlank()) regions.add(g.trim());
-        }
+        List<String> regions = regionEnv.trim().equals("전국")
+                ? List.of() : splitCsv(regionEnv);
         boolean dry = a.contains("--dry");
-        if (!dry && (isBlank(token) || isBlank(chat))) {
+        if (!dry && (isBlank(token) || chats.isEmpty())) {
             System.err.println("TG_TOKEN / TG_CHAT_ID 환경변수를 설정하세요. (--dry 로 확인만 가능)");
             System.exit(1);
         }
@@ -415,8 +439,8 @@ public class Cheongyak {
             for (Item i : fresh) texts.add(i.text());
             System.out.println(String.join("\n\n", texts));
         } else {
-            sendAll(token, chat, fresh);
-            System.out.println(fresh.size() + "건 전송");
+            sendAll(token, chats, fresh);
+            System.out.println(fresh.size() + "건 전송 (수신자 " + chats.size() + "명)");
             for (Item i : fresh) seen.add(i.key());
             saveSeen(seen);   // 전송에 성공한 뒤에만 기록한다
         }
@@ -425,6 +449,15 @@ public class Cheongyak {
     // ---------- 잡동사니 ----------
 
     static boolean isBlank(String s) { return s == null || s.isBlank(); }
+
+    /** "a, b ,c" -> [a, b, c]. null/빈칸은 걸러낸다. */
+    static List<String> splitCsv(String s) {
+        List<String> out = new ArrayList<>();
+        if (s != null) {
+            for (String p : s.split(",")) if (!p.isBlank()) out.add(p.trim());
+        }
+        return out;
+    }
 
     /** "--html docs/index.html" 처럼 플래그 바로 뒤에 오는 값. 없으면 null. */
     static String argValue(List<String> args, String flag) {
@@ -540,6 +573,15 @@ public class Cheongyak {
                 .equals("&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;"), "HTML 이스케이프");
         check(argValue(List.of("--html", "docs/index.html"), "--html").equals("docs/index.html")
                 && argValue(List.of("--html"), "--html") == null, "인자 값 파싱");
+
+        // 수신자 여러 명
+        check(splitCsv(" 111 ,222,, 333 ").equals(List.of("111", "222", "333")), "쉼표 목록 파싱");
+        check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
+        List<Item> many = new ArrayList<>();
+        for (int i = 0; i < 200; i++) many.add(new Item("k" + i, "2026-01-01", "가".repeat(60)));
+        List<String> parts = chunk(many);
+        check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
+        for (String p : parts) check(p.length() <= 3800, "덩어리 크기 제한");
 
         System.out.println("selftest OK");
     }
