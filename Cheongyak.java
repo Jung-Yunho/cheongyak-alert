@@ -11,6 +11,7 @@
  *   TG_CHAT_ID     받을 채팅 ID. 쉼표로 여러 명 가능. 그룹은 음수 ID 하나면 된다 (필수)
  *   APPLYHOME_KEY  data.go.kr 개인 API 인증키  (없으면 아파트 건너뜀)
  *   APT_REGIONS    지역 필터 (안 정하면 "서울,경기,인천". 전국을 보려면 "전국")
+ *   WEB_URL        메시지 맨 끝에 붙일 웹 페이지 주소 (없으면 링크를 안 붙인다)
  *
  * 외부 라이브러리를 쓰지 않는다. JDK 에 JSON 파서가 없어서 응답을 정규식으로 읽는데,
  * 청약홈 응답이 중첩 없는 평면 구조라 가능하다(실제 응답 200건으로 확인).
@@ -112,8 +113,9 @@ public class Cheongyak {
             }
             // 헤더 / 광고 / 빈 행 걸러내기: 청약일 칸에 "~" 가 있는 행만 진짜 데이터다.
             if (c.size() < 6 || c.get(0).isEmpty() || !c.get(1).contains("~")) continue;
+            // 말머리(종류)는 메시지 머리말과 페이지 섹션이 이미 알려주므로 붙이지 않는다.
             out.add(new Item("ipo:" + c.get(0) + c.get(1), ipoDate(c.get(1)), String.join("\n",
-                    "[공모주] " + c.get(0),
+                    c.get(0),
                     "청약일 " + c.get(1),
                     "공모가 " + or(c.get(3), "-"),
                     "주간사 " + or(c.get(5), "-"))));
@@ -174,7 +176,7 @@ public class Cheongyak {
 
             String bgn = f(r, "RCEPT_BGNDE"), win = f(r, "PRZWNER_PRESNATN_DE");
             List<String> lines = new ArrayList<>();
-            lines.add("[아파트] " + name);
+            lines.add(name);
             lines.add(join(" · ", area, f(r, "HOUSE_SECD_NM")));
             lines.add(f(r, "HSSPLY_ADRES"));
             lines.add(prefix("공고일 ", f(r, "RCRIT_PBLANC_DE")));
@@ -215,19 +217,47 @@ public class Cheongyak {
         }
     }
 
-    /** 텔레그램 메시지는 4096자 제한이라 미리 덩어리로 나눠둔다. */
-    static List<String> chunk(List<Item> items) {
+    static final String[][] SECTIONS = {{"apt:", "🏢 아파트"}, {"ipo:", "📈 공모주"}};
+    static final String RULE = "─".repeat(16);
+    static final int LIMIT = 3800;   // 텔레그램 상한은 4096. 여유를 둔다.
+
+    /**
+     * 보낼 메시지를 만든다. 종류별로 묶어 머리말을 달고, 맨 끝에 웹 주소를 붙인다.
+     * 상한을 넘으면 여러 개로 나누고, 나뉜 덩어리에는 머리말을 다시 달아 맥락을 잃지 않게 한다.
+     */
+    static List<String> compose(List<Item> items, String webUrl) {
         List<String> parts = new ArrayList<>();
         StringBuilder buf = new StringBuilder();
-        for (Item it : items) {
-            if (buf.length() > 0 && buf.length() + it.text().length() + 2 > 3800) {
-                parts.add(buf.toString());
-                buf.setLength(0);
+
+        for (String[] sec : SECTIONS) {
+            List<Item> sub = new ArrayList<>();
+            for (Item i : items) if (i.key().startsWith(sec[0])) sub.add(i);
+            if (sub.isEmpty()) continue;
+
+            String title = sec[1] + " " + sub.size() + "건";
+            String head = title + "\n" + RULE;
+            boolean headPending = true;
+            for (Item it : sub) {
+                String block = (headPending ? head + "\n\n" : "") + it.text();
+                if (buf.length() > 0 && buf.length() + block.length() + 2 > LIMIT) {
+                    parts.add(buf.toString());
+                    buf.setLength(0);
+                    // 섹션 도중에 잘렸으면 새 덩어리에 머리말을 다시 단다.
+                    if (!headPending) block = title + " (이어서)\n" + RULE + "\n\n" + it.text();
+                }
+                if (buf.length() > 0) buf.append("\n\n");
+                buf.append(block);
+                headPending = false;
             }
-            if (buf.length() > 0) buf.append("\n\n");
-            buf.append(it.text());
         }
         if (buf.length() > 0) parts.add(buf.toString());
+
+        if (!parts.isEmpty() && !isBlank(webUrl)) {
+            String tail = "\n\n" + RULE + "\n웹 브라우저에서 보기\n" + webUrl;
+            int last = parts.size() - 1;
+            if (parts.get(last).length() + tail.length() > LIMIT) parts.add(tail.trim());
+            else parts.set(last, parts.get(last) + tail);
+        }
         return parts;
     }
 
@@ -238,8 +268,9 @@ public class Cheongyak {
      * 전원 실패일 때만 예외를 던져 seen.txt 기록을 막는다 — 그래야 다음 실행에 다시 시도한다.
      * 일부만 실패한 경우 기록은 남긴다. 안 그러면 성공한 사람이 같은 알림을 계속 다시 받는다.
      */
-    static void sendAll(String token, List<String> chatIds, List<Item> items) throws IOException {
-        List<String> parts = chunk(items);
+    static void sendAll(String token, List<String> chatIds, List<Item> items, String webUrl)
+            throws IOException {
+        List<String> parts = compose(items, webUrl);
         List<String> failed = new ArrayList<>();
         for (String id : chatIds) {
             try {
@@ -312,8 +343,7 @@ public class Cheongyak {
             if (!it.key().startsWith(prefix)) continue;
             any = true;
             String[] lines = it.text().split("\n");
-            // 첫 줄은 "[아파트] 이름" 이라 말머리를 떼고 제목으로 쓴다.
-            String head = lines[0].replaceFirst("^\\[[^\\]]*\\]\\s*", "");
+            String head = lines[0];   // 첫 줄이 이름
             boolean soon = !it.date().isEmpty() && it.date().compareTo(today) >= 0;
             b.append("<div class=\"card").append(soon ? " soon" : "").append("\">");
             if (soon) b.append("<span class=\"tag\">예정</span>");
@@ -434,12 +464,13 @@ public class Cheongyak {
         for (Item i : items) if (!seen.contains(i.key())) fresh.add(i);
         if (fresh.isEmpty()) { System.out.println("신규 없음"); return; }
 
+        String webUrl = or(System.getenv("WEB_URL"), "");
         if (dry) {
-            List<String> texts = new ArrayList<>();
-            for (Item i : fresh) texts.add(i.text());
-            System.out.println(String.join("\n\n", texts));
+            // 실제로 나갈 메시지 그대로 찍는다.
+            System.out.println(String.join("\n\n──────── 다음 메시지 ────────\n\n",
+                    compose(fresh, webUrl)));
         } else {
-            sendAll(token, chats, fresh);
+            sendAll(token, chats, fresh, webUrl);
             System.out.println(fresh.size() + "건 전송 (수신자 " + chats.size() + "명)");
             for (Item i : fresh) seen.add(i.key());
             saveSeen(seen);   // 전송에 성공한 뒤에만 기록한다
@@ -577,11 +608,29 @@ public class Cheongyak {
         // 수신자 여러 명
         check(splitCsv(" 111 ,222,, 333 ").equals(List.of("111", "222", "333")), "쉼표 목록 파싱");
         check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
+        // 메시지 구성: 종류별 머리말 + 하단 웹 주소
+        List<Item> mixed = List.of(new Item("apt:1", "2026-08-01", "가나아파트\n서울"),
+                new Item("ipo:x", "2026-08-02", "가나전자\n청약일 ..."),
+                new Item("ipo:y", "2026-08-03", "다라전자\n청약일 ..."));
+        List<String> msg = compose(mixed, "https://example.com/");
+        check(msg.size() == 1, "짧으면 한 통");
+        String m = msg.get(0);
+        check(m.startsWith("🏢 아파트 1건"), "아파트 머리말이 먼저");
+        check(m.contains("📈 공모주 2건"), "공모주 머리말과 건수");
+        check(m.indexOf("🏢") < m.indexOf("📈"), "아파트 -> 공모주 순서");
+        check(m.endsWith("웹 브라우저에서 보기\nhttps://example.com/"), "맨 끝에 웹 주소");
+        check(!m.contains("[아파트]") && !m.contains("[공모주]"), "말머리 중복 없음");
+        check(!compose(mixed, "").get(0).contains("웹 브라우저에서 보기"), "WEB_URL 없으면 링크 없음");
+        check(compose(List.of(), "https://example.com/").isEmpty(), "보낼 게 없으면 빈 목록");
+
+        // 상한 초과 시 분할 + 잘린 섹션에 머리말 재부착
         List<Item> many = new ArrayList<>();
-        for (int i = 0; i < 200; i++) many.add(new Item("k" + i, "2026-01-01", "가".repeat(60)));
-        List<String> parts = chunk(many);
+        for (int i = 0; i < 200; i++) many.add(new Item("ipo:k" + i, "2026-01-01", "가".repeat(60)));
+        List<String> parts = compose(many, "https://example.com/");
         check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
-        for (String p : parts) check(p.length() <= 3800, "덩어리 크기 제한");
+        for (String p : parts) check(p.length() <= LIMIT, "덩어리 크기 제한 (" + p.length() + ")");
+        check(parts.get(1).startsWith("📈 공모주 200건 (이어서)"), "이어지는 덩어리에 머리말 재부착");
+        check(parts.get(parts.size() - 1).endsWith("https://example.com/"), "웹 주소는 마지막에 한 번");
 
         System.out.println("selftest OK");
     }

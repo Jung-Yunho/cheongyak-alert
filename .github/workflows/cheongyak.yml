@@ -32,6 +32,8 @@ jobs:
           APPLYHOME_KEY: ${{ secrets.APPLYHOME_KEY }}
           # 안 만들면 빈 값 -> 기본 "서울,경기,인천". 전국을 보려면 값을 "전국" 으로.
           APT_REGIONS: ${{ vars.APT_REGIONS }}
+          # 텔레그램 메시지 맨 끝에 붙는 링크. Pages 주소가 바뀌면 여기도 바꾼다.
+          WEB_URL: https://jung-yunho.github.io/cheongyak-alert/
         run: |
           java -Dfile.encoding=UTF-8 -Dcheongyak.dir=. \
                Cheongyak.java --html docs/index.html
