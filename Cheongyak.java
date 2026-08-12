@@ -410,6 +410,9 @@ public class Cheongyak {
         }
     }
 
+    /** 슈퍼그룹 전환 시 텔레그램이 응답에 담아 주는 새 chat_id. */
+    static final Pattern MIGRATE = Pattern.compile("\"migrate_to_chat_id\"\\s*:\\s*(-?\\d+)");
+
     static final String RULE = "─".repeat(16);
     static final int LIMIT = 3800;   // 텔레그램 상한은 4096. 여유를 둔다.
 
@@ -464,6 +467,23 @@ public class Cheongyak {
             try {
                 for (String p : parts) send(token, id, p);
             } catch (IOException e) {
+                // 그룹이 슈퍼그룹으로 전환되면 chat_id 가 바뀐다. 인원이 늘 때만이 아니라
+                // 공개 링크 설정·관리자 권한 변경 같은 것으로도 전환된다.
+                // 텔레그램이 새 ID 를 응답에 담아 주므로 그걸로 한 번 다시 보내고,
+                // 무엇을 바꿔야 하는지 로그에 남긴다. 설정을 안 고치면 매번 이 경로를 탄다.
+                Matcher m = MIGRATE.matcher(or(e.getMessage(), ""));
+                if (m.find()) {
+                    String moved = m.group(1);
+                    System.out.println("그룹이 슈퍼그룹으로 전환되었습니다. "
+                            + "TG_CHAT_ID 를 " + moved + " 로 바꾸세요. 이번에는 새 ID 로 보냅니다.");
+                    try {
+                        for (String p : parts) send(token, moved, p);
+                        continue;
+                    } catch (IOException e2) {
+                        failed.add(moved + " (전환 후 재시도) → " + e2.getMessage());
+                        continue;
+                    }
+                }
                 failed.add(id + " → " + e.getMessage());
             }
         }
@@ -1108,6 +1128,13 @@ public class Cheongyak {
 
         // 수신자 여러 명
         check(splitCsv(" 111 ,222,, 333 ").equals(List.of("111", "222", "333")), "쉼표 목록 파싱");
+
+        // 슈퍼그룹 전환 응답에서 새 chat_id 를 뽑아낸다 (실제로 겪은 오류 본문)
+        Matcher mg = MIGRATE.matcher("텔레그램 전송 실패 - HTTP 400 - {\"ok\":false,\"error_code\":400,"
+                + "\"description\":\"Bad Request: group chat was upgraded to a supergroup chat\","
+                + "\"parameters\":{\"migrate_to_chat_id\":-1004320070051}}");
+        check(mg.find() && mg.group(1).equals("-1004320070051"), "전환된 새 chat_id 추출");
+        check(!MIGRATE.matcher("HTTP 403 - bot was blocked").find(), "다른 오류엔 안 걸린다");
         check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
         // 메시지 구성: 머리말 + 건수 + 하단 웹 주소
         List<Item> mixed = List.of(
