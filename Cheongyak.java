@@ -67,6 +67,18 @@ public class Cheongyak {
     // ("서울특별시" 가 아니다). 실제 응답 1000건에서 확인한 값.
     static final String DEFAULT_REGIONS = "서울,경기,인천";
 
+    /** 분양가를 낼 때 뺄 소형 타입의 기준(전용 ㎡ 이하). MIN_AREA 환경변수로 조정한다. */
+    static final double MIN_AREA = parseArea(System.getenv("MIN_AREA"), 50);
+
+    static double parseArea(String v, double dflt) {
+        try {
+            return isBlank(v) ? dflt : Double.parseDouble(v.trim());
+        } catch (NumberFormatException e) {
+            System.out.println("MIN_AREA 값을 못 읽어 기본값 " + dflt + " 을 씁니다: " + v);
+            return dflt;
+        }
+    }
+
     /**
      * 알림 한 건.
      * key   중복 판단용
@@ -76,6 +88,7 @@ public class Cheongyak {
      * gugun 시·군·구. 위와 같음. 주소에서 못 읽으면 빈 문자열
      * addr  공급 주소. text 안에도 있지만, 페이지에서 이 줄만 지도 링크로 만들려고 따로 둔다
      * price 분양가 범위. 없으면 빈 문자열
+     * area  그 분양가에 해당하는 전용면적 범위. 소형을 뺐다는 걸 알 수 있게 같이 보여준다
      * units 공급 세대수. 없으면 빈 문자열
      * text  텔레그램으로 보낼 내용 (위 값들이 줄 단위로 다 들어 있다)
      *
@@ -83,7 +96,7 @@ public class Cheongyak {
      * 값을 판단하는 데 제일 먼저 보게 되는 정보라 본문 줄과 섞어두면 눈에 안 들어온다.
      */
     record Item(String key, String start, String end, String sido, String gugun,
-                String addr, String price, String units, String text) {}
+                String addr, String price, String area, String units, String text) {}
 
     /** 0 = 접수 중(가장 급하다), 1 = 접수 예정. 마감된 건은 애초에 수집 단계에서 뺀다. */
     static int rank(Item it, String today) {
@@ -288,11 +301,11 @@ public class Cheongyak {
      * 를 쓰고 드물게 GNRL_RCEPT_* 만 채워진 건도 있다(실제 60건 중 2건). 그래서 순서대로 찾는다.
      */
     static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions,
-                               String today, String prefix, Map<String, String> prices) {
+                               String today, String prefix, Map<String, Price> prices) {
         List<Item> out = new ArrayList<>();
         for (Map<String, String> r : recs) {
-            String area = f(r, "SUBSCRPT_AREA_CODE_NM");
-            if (!regions.isEmpty() && regions.stream().noneMatch(area::contains)) continue;
+            String region = f(r, "SUBSCRPT_AREA_CODE_NM");   // 시·도
+            if (!regions.isEmpty() && regions.stream().noneMatch(region::contains)) continue;
 
             String end = iso(first(r, "RCEPT_ENDDE", "SUBSCRPT_RCEPT_ENDDE", "GNRL_RCEPT_ENDDE"));
             // 이미 접수 마감된 공고는 알릴 이유가 없다. 날짜가 ISO 라 문자열 비교로 충분.
@@ -305,14 +318,17 @@ public class Cheongyak {
             String win = iso(f(r, "PRZWNER_PRESNATN_DE"));
             String noticeDe = iso(f(r, "RCRIT_PBLANC_DE"));
             List<String> lines = new ArrayList<>();
-            String price = or(prices.get(no), "");
+            Price p = prices.get(no);
+            String price = p == null ? "" : p.range();
+            String area = p == null ? "" : p.area();
             String units = f(r, "TOT_SUPLY_HSHLDCO");
             if (!units.matches("[1-9]\\d*")) units = "";   // 0 이나 빈 값은 표시하지 않는다
             String addr = f(r, "HSSPLY_ADRES");
 
             lines.add(name);
-            lines.add(join(" · ", area, f(r, "HOUSE_SECD_NM")));
+            lines.add(join(" · ", region, f(r, "HOUSE_SECD_NM")));
             lines.add(join(" · ", prefix("분양가 ", price),
+                    area.isEmpty() ? "" : "전용 " + area,
                     units.isEmpty() ? "" : units + "세대"));
             lines.add(addr);
             lines.add(prefix("공고일 ", noticeDe));
@@ -321,7 +337,7 @@ public class Cheongyak {
             lines.add(f(r, "PBLANC_URL"));
             lines.removeIf(String::isBlank);
             out.add(new Item(prefix + no, or(bgn, noticeDe), end,
-                    area, gugunOf(addr), addr, price, units, String.join("\n", lines)));
+                    region, gugunOf(addr), addr, price, area, units, String.join("\n", lines)));
         }
         return out;
     }
@@ -337,20 +353,33 @@ public class Cheongyak {
         // 그만큼만 부른다(200건 전부 부르면 낭비다). 그래서 파싱을 두 번 한다 — 200건짜리
         // 문자열 처리라 비용은 무시할 만하고, 금액을 나중에 문자열에 끼워넣는 것보다 깔끔하다.
         List<Item> first = parseApt(recs, regions, today, src.prefix());
-        Map<String, String> prices = fetchPrices(key, src, first);
+        Map<String, Price> prices = fetchPrices(key, src, first);
         return prices.isEmpty() ? first
                 : parseApt(recs, regions, today, src.prefix(), prices);
     }
 
+    /** 공고 하나의 분양가 범위와 그에 해당하는 전용면적 범위. */
+    record Price(String range, String area) {}
+
+    /** 주택형 코드 "084.7402A" 의 앞자리가 전용면적(㎡)이다. */
+    static final Pattern AREA = Pattern.compile("^(\\d+(?:\\.\\d+)?)");
+
     /**
-     * 공고별 분양가 범위를 구한다. 반환값은 공고번호 -> "11.8억 ~ 14.5억".
+     * 공고별 분양가 범위를 구한다. 주택형마다 값이 달라 최저~최고로 묶는다.
      *
-     * 주택형마다 값이 달라 하나로 못 정하므로 최저~최고로 묶는다.
+     * **소형 타입은 뺀다.** 39㎡·44㎡ 같은 타입이 섞여 있으면 그게 최저가가 되어
+     * 실제보다 훨씬 싸 보인다. 충정로역자이르네가 실측으로 전체 10.0~24.6억인데
+     * 50㎡ 초과만 보면 18.9~24.6억이다 — "10억부터" 는 40㎡ 얘기였다.
+     * 기준은 MIN_AREA(전용 ㎡), 환경변수로 바꿀 수 있다.
+     *
+     * 다만 **소형만 있는 공고는 그대로 쓴다.** 청계 노르웨이숲(11차)처럼 40㎡ 단일
+     * 타입인 건이 있어서, 무조건 빼면 분양가가 통째로 사라진다. 대신 전용면적을
+     * 같이 돌려줘서 화면에서 오해가 없게 한다.
+     *
      * 한 공고가 실패해도 나머지는 계속한다 — 분양가는 있으면 좋은 정보지 알림의 본질이 아니다.
-     * 임대처럼 분양가가 없는 유형은 값이 안 잡혀 그냥 지도에서 빠진다.
      */
-    static Map<String, String> fetchPrices(String key, Source src, List<Item> items) {
-        Map<String, String> out = new LinkedHashMap<>();
+    static Map<String, Price> fetchPrices(String key, Source src, List<Item> items) {
+        Map<String, Price> out = new LinkedHashMap<>();
         for (Item it : items) {
             String no = it.key().substring(src.prefix().length());
             try {
@@ -358,23 +387,44 @@ public class Cheongyak {
                         + "&serviceKey=" + URLEncoder.encode(key, StandardCharsets.UTF_8)
                         + "&" + URLEncoder.encode("cond[PBLANC_NO::EQ]", StandardCharsets.UTF_8)
                         + "=" + URLEncoder.encode(no, StandardCharsets.UTF_8);
-                long min = Long.MAX_VALUE, max = 0;
+
+                List<double[]> all = new ArrayList<>();   // {전용면적, 금액}
                 for (Map<String, String> r : parseRecords(
                         new String(get(url), StandardCharsets.UTF_8))) {
                     // 임의공급은 "27,600" 처럼 쉼표를 넣어 준다. 다른 소스는 안 넣는다.
                     String v = f(r, "LTTOT_TOP_AMOUNT").replace(",", "");
                     if (!v.matches("\\d+")) continue;
                     long amt = Long.parseLong(v);
-                    if (amt <= 0) continue;          // 값이 안 정해진 주택형
-                    min = Math.min(min, amt);
-                    max = Math.max(max, amt);
+                    if (amt <= 0) continue;              // 값이 안 정해진 주택형
+                    Matcher m = AREA.matcher(f(r, "HOUSE_TY"));
+                    all.add(new double[]{m.find() ? Double.parseDouble(m.group(1)) : 0, amt});
                 }
-                if (max > 0) out.put(no, priceRange(min, max));
+                if (all.isEmpty()) continue;
+
+                List<double[]> use = new ArrayList<>();
+                for (double[] x : all) if (x[0] > MIN_AREA) use.add(x);
+                if (use.isEmpty()) use = all;            // 소형만 있는 공고는 그대로
+
+                long lo = Long.MAX_VALUE, hi = 0;
+                double aLo = Double.MAX_VALUE, aHi = 0;
+                for (double[] x : use) {
+                    lo = Math.min(lo, (long) x[1]);
+                    hi = Math.max(hi, (long) x[1]);
+                    if (x[0] > 0) { aLo = Math.min(aLo, x[0]); aHi = Math.max(aHi, x[0]); }
+                }
+                out.put(no, new Price(priceRange(lo, hi),
+                        aHi > 0 ? areaRange(aLo, aHi) : ""));
             } catch (Exception e) {
                 System.out.println("분양가 조회 실패(건너뜀) " + no + " - " + e);
             }
         }
         return out;
+    }
+
+    /** "60~85㎡". 하나뿐이면 "85㎡". 소수점은 버린다 — 훑어보는 값이다. */
+    static String areaRange(double lo, double hi) {
+        long a = Math.round(lo), b = Math.round(hi);
+        return a == b ? a + "㎡" : a + "~" + b + "㎡";
     }
 
     /** 만원 단위 금액을 억으로. 124000 -> "12.4억". 훑어보는 용도라 소수 한 자리면 충분하다. */
@@ -774,6 +824,11 @@ public class Cheongyak {
                     b.append("<div>분양가<strong>").append(htmlEsc(it.price()))
                             .append("</strong></div>");
                 }
+                // 분양가가 어느 면적 기준인지 같이 보여준다. 소형을 뺐다는 게 여기서 드러난다.
+                if (!it.area().isEmpty()) {
+                    b.append("<div>전용면적<strong>").append(htmlEsc(it.area()))
+                            .append("</strong></div>");
+                }
                 if (!it.units().isEmpty()) {
                     b.append("<div>공급규모<strong>").append(htmlEsc(it.units()))
                             .append("세대</strong></div>");
@@ -1092,11 +1147,20 @@ public class Cheongyak {
         check(priceRange(44812, 44555).equals("4.5억"), "반올림하면 같은 값은 하나만");
         check(priceRange(73700, 299900).equals("7.4억 ~ 30.0억"), "다르면 범위로");
         List<Item> priced = parseApt(recs, List.of("서울"), today, "apt:",
-                Map.of("1", "11.8억 ~ 14.5억"));
-        // 테스트 레코드 1번은 TOT_SUPLY_HSHLDCO=594 라 세대수가 같은 줄에 붙는다
-        check(priced.get(0).text().contains("\n분양가 11.8억 ~ 14.5억 · 594세대\n"), "분양가+세대수 줄");
-        check(priced.get(0).price().equals("11.8억 ~ 14.5억") && priced.get(0).units().equals("594"),
-                "분양가·세대수를 필드로도 들고 있다");
+                Map.of("1", new Price("11.8억 ~ 14.5억", "60~85㎡")));
+        // 테스트 레코드 1번은 TOT_SUPLY_HSHLDCO=594 라 전용면적·세대수가 같은 줄에 붙는다
+        check(priced.get(0).text().contains("\n분양가 11.8억 ~ 14.5억 · 전용 60~85㎡ · 594세대\n"),
+                "분양가+전용면적+세대수 줄");
+        check(priced.get(0).price().equals("11.8억 ~ 14.5억")
+                && priced.get(0).area().equals("60~85㎡")
+                && priced.get(0).units().equals("594"), "셋 다 필드로도 들고 있다");
+
+        // 소형 타입 제외 기준과 면적 표기
+        check(MIN_AREA == 50, "기본 기준은 전용 50㎡");
+        check(parseArea("60", 50) == 60 && parseArea(null, 50) == 50
+                && parseArea("이상한값", 50) == 50, "MIN_AREA 파싱과 기본값");
+        check(areaRange(59.97, 84.98).equals("60~85㎡"), "면적 범위");
+        check(areaRange(39.7, 39.7).equals("40㎡"), "하나뿐이면 하나만");
         check(!seoul.get(0).text().contains("분양가"), "금액 없으면 그 줄에 분양가가 안 나온다");
         check(seoul.get(0).text().contains("594세대"), "금액이 없어도 세대수는 나온다");
         check(parseApt(recs, List.of(), today, "apt:").get(1).units().isEmpty(),
@@ -1110,11 +1174,11 @@ public class Cheongyak {
         check(parseApt(recs, List.of(), today, "apt:").get(1).start().equals("2026-08-30"), "접수시작일 우선");
 
         // 상태 판정과 정렬: 접수 중(임박한 마감 순) 먼저, 그다음 예정(빨리 시작하는 순)
-        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "서울", "마포구", "", "", "", "오늘마감");
-        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "서울", "마포구", "", "", "", "내일마감");
-        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "경기", "성남시", "", "", "", "접수중");
-        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "경기", "", "", "", "", "곧시작");
-        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "인천", "연수구", "", "", "", "나중시작");
+        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "서울", "마포구", "", "", "", "", "오늘마감");
+        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "서울", "마포구", "", "", "", "", "내일마감");
+        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "경기", "성남시", "", "", "", "", "접수중");
+        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "경기", "", "", "", "", "", "곧시작");
+        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "인천", "연수구", "", "", "", "", "나중시작");
         check(badge(urgent, today)[2].equals("오늘 마감"), "오늘 마감 배지");
         check(badge(tmr, today)[2].equals("내일 마감"), "내일 마감 배지");
         check(badge(open, today)[2].equals("접수중"), "접수중 배지");
@@ -1162,8 +1226,8 @@ public class Cheongyak {
         // 한때 "apt:" 로만 걸러서 무순위 건이 페이지에서만 통째로 빠진 적이 있다.
         StringBuilder page = new StringBuilder();
         section(page, List.of(
-                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "", "", "분양건\n서울"),
-                new Item("rem:2", "2026-08-01", "2026-08-20", "인천", "검단구", "", "", "", "무순위건\n인천")), today);
+                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "", "", "", "분양건\n서울"),
+                new Item("rem:2", "2026-08-01", "2026-08-20", "인천", "검단구", "", "", "", "", "무순위건\n인천")), today);
         check(page.indexOf("분양건") > 0 && page.indexOf("무순위건") > 0, "두 소스 모두 페이지에 실림");
         check(page.indexOf("data-sido=\"인천\" data-gugun=\"검단구\"") > 0, "무순위에도 필터 속성");
         check(argValue(List.of("--html", "docs/index.html"), "--html").equals("docs/index.html")
@@ -1181,8 +1245,8 @@ public class Cheongyak {
         check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
         // 메시지 구성: 머리말 + 건수 + 하단 웹 주소
         List<Item> mixed = List.of(
-                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "", "", "가나아파트\n서울"),
-                new Item("apt:2", "2026-08-02", "2026-08-21", "경기", "성남시", "", "", "", "다라아파트\n경기"));
+                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "", "", "", "가나아파트\n서울"),
+                new Item("apt:2", "2026-08-02", "2026-08-21", "경기", "성남시", "", "", "", "", "다라아파트\n경기"));
         List<String> msg = compose(mixed, "https://example.com/", today);
         check(msg.size() == 1, "짧으면 한 통");
         String m = msg.get(0);
@@ -1196,7 +1260,7 @@ public class Cheongyak {
         check(withBadge(urgent, today).startsWith("🔴 오늘 마감 · 오늘마감"), "메시지 배지 - 오늘 마감");
         check(withBadge(open, today).startsWith("🟢 접수중 · 접수중"), "메시지 배지 - 접수중");
         check(withBadge(soon1, today).startsWith("🟠 예정 · 곧시작"), "메시지 배지 - 예정");
-        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "서울", "중구", "", "", "", "이름\n둘째줄\n셋째줄"), today)
+        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "서울", "중구", "", "", "", "", "이름\n둘째줄\n셋째줄"), today)
                 .endsWith("\n둘째줄\n셋째줄"), "첫 줄에만 붙고 나머지는 그대로");
         check(m.contains("🟢 접수중 · 가나아파트"), "실제 메시지에 배지 반영");
 
@@ -1210,7 +1274,7 @@ public class Cheongyak {
         // 상한 초과 시 분할 + 잘린 덩어리에 머리말 재부착
         List<Item> many = new ArrayList<>();
         for (int i = 0; i < 200; i++) {
-            many.add(new Item("apt:k" + i, "2026-01-01", "2026-12-31", "서울", "중구", "", "", "", "가".repeat(60)));
+            many.add(new Item("apt:k" + i, "2026-01-01", "2026-12-31", "서울", "중구", "", "", "", "", "가".repeat(60)));
         }
         List<String> parts = compose(many, "https://example.com/", today);
         check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
