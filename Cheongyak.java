@@ -55,9 +55,12 @@ public class Cheongyak {
      * key   중복 판단용
      * start 청약 접수 시작일(ISO). 모르면 빈 문자열
      * end   청약 접수 종료일(ISO). 모르면 빈 문자열 — 이때는 마감 판정에서 제외하지 않는다
+     * sido  시·도. 웹 페이지 필터용. 공모주는 지역 개념이 없어 빈 문자열
+     * gugun 시·군·구. 위와 같음. 주소에서 못 읽으면 빈 문자열
      * text  실제로 보낼 내용
      */
-    record Item(String key, String start, String end, String text) {}
+    record Item(String key, String start, String end,
+                String sido, String gugun, String text) {}
 
     /** 0 = 접수 중(가장 급하다), 1 = 접수 예정. 마감된 건은 애초에 수집 단계에서 뺀다. */
     static int rank(Item it, String today) {
@@ -140,7 +143,7 @@ public class Cheongyak {
             String bgn = ipoDate(c.get(1)), end = ipoEnd(c.get(1));
             if (closed(end, today)) continue;   // 이미 끝난 청약은 싣지 않는다
             // 말머리(종류)는 메시지 머리말과 페이지 섹션이 이미 알려주므로 붙이지 않는다.
-            out.add(new Item("ipo:" + c.get(0) + c.get(1), bgn, end, String.join("\n",
+            out.add(new Item("ipo:" + c.get(0) + c.get(1), bgn, end, "", "", String.join("\n",
                     c.get(0),
                     "청약일 " + c.get(1),
                     "공모가 " + or(c.get(3), "-"),
@@ -203,6 +206,20 @@ public class Cheongyak {
         return out;
     }
 
+    /**
+     * 공급 주소에서 시·군·구를 뽑는다. API 에 별도 필드가 없어 주소를 자른다.
+     *   "서울특별시 영등포구 신길동 …"      -> 영등포구
+     *   "경기도 성남시 수정구 신흥동 …"      -> 성남시   (특례시는 구가 하나 더 있지만 시까지만)
+     *   "세종특별자치시 다솜동 …"            -> ""       (시·군·구 단계가 없다)
+     * 형식이 어긋나면 빈 문자열. 그런 건은 필터에서 걸러내지 않고 항상 보여준다 —
+     * 잘못 숨겨서 놓치는 쪽이 더 위험하다.
+     */
+    static String gugunOf(String addr) {
+        String[] t = addr.trim().split("\\s+");
+        if (t.length < 2) return "";
+        return t[1].matches(".+[시군구]") ? t[1] : "";
+    }
+
     static List<Item> parseApt(List<Map<String, String>> recs, List<String> regions, String today) {
         List<Item> out = new ArrayList<>();
         for (Map<String, String> r : recs) {
@@ -227,7 +244,7 @@ public class Cheongyak {
             lines.add(f(r, "PBLANC_URL"));
             lines.removeIf(String::isBlank);
             out.add(new Item("apt:" + no, or(bgn, f(r, "RCRIT_PBLANC_DE")), end,
-                    String.join("\n", lines)));
+                    area, gugunOf(f(r, "HSSPLY_ADRES")), String.join("\n", lines)));
         }
         return out;
     }
@@ -361,6 +378,12 @@ public class Cheongyak {
                   .t-open { color: #3da35d; }
                   .t-soon { color: #e8a33d; }
                   .empty { color: #888; }
+                  .filter { display: flex; gap: 8px; align-items: center;
+                            flex-wrap: wrap; margin-bottom: 14px; }
+                  .filter select { font: inherit; font-size: .9rem; padding: 5px 8px;
+                                   border-radius: 7px; border: 1px solid #8886;
+                                   background: transparent; color: inherit; }
+                  .filter #cnt { color: #888; font-size: .85rem; }
                 </style>
                 """);
         b.append("<h1>청약 알림</h1>\n<div class=\"sub\">갱신 ")
@@ -373,6 +396,54 @@ public class Cheongyak {
         section(b, "아파트", items, "apt:", today);   // 호출 쪽에서 정렬해서 넘긴다
         section(b, "공모주", items, "ipo:", today);
 
+        // 정적 페이지라 필터는 브라우저에서 보이고 숨기는 방식이다.
+        // 시·군·구 목록은 실제로 실린 카드에서 만들어 빈 항목이 안 생기게 한다.
+        // 구를 못 읽은 카드(data-gugun="")는 어떤 선택에서도 숨기지 않는다.
+        b.append("""
+                <script>
+                (function () {
+                  var cards = [].slice.call(document.querySelectorAll('.card[data-sido]'));
+                  var box = document.querySelector('.filter');
+                  if (!box || !cards.length) { if (box) box.style.display = 'none'; return; }
+                  var sido = document.getElementById('sido'),
+                      gugun = document.getElementById('gugun'),
+                      cnt = document.getElementById('cnt');
+
+                  function options(list, label) {
+                    var seen = {}, out = ['<option value="">' + label + '</option>'];
+                    list.forEach(function (v) {
+                      if (v && !seen[v]) { seen[v] = 1; out.push('<option>' + v + '</option>'); }
+                    });
+                    return out.join('');
+                  }
+                  function fillGugun() {
+                    var s = sido.value, keep = gugun.value;
+                    gugun.innerHTML = options(cards.filter(function (c) {
+                      return !s || c.dataset.sido === s;
+                    }).map(function (c) { return c.dataset.gugun; }), '시·군·구 전체');
+                    gugun.value = keep;
+                    if (gugun.value !== keep) gugun.value = '';   // 시·도를 바꿔 사라졌으면 해제
+                  }
+                  function apply() {
+                    var s = sido.value, g = gugun.value, n = 0;
+                    cards.forEach(function (c) {
+                      var ok = (!s || c.dataset.sido === s)
+                            && (!g || !c.dataset.gugun || c.dataset.gugun === g);
+                      c.style.display = ok ? '' : 'none';
+                      if (ok) n++;
+                    });
+                    cnt.textContent = n + '건';
+                  }
+                  sido.innerHTML = options(cards.map(function (c) { return c.dataset.sido; }),
+                                           '시·도 전체');
+                  sido.onchange = function () { fillGugun(); apply(); };
+                  gugun.onchange = apply;
+                  fillGugun();
+                  apply();
+                })();
+                </script>
+                """);
+
         Path parent = out.toAbsolutePath().getParent();
         if (parent != null) Files.createDirectories(parent);
         Files.writeString(out, b.toString(), StandardCharsets.UTF_8);
@@ -381,15 +452,31 @@ public class Cheongyak {
 
     static void section(StringBuilder b, String title, List<Item> all,
                         String prefix, String today) {
+        boolean apt = prefix.equals("apt:");
         b.append("<h2>").append(title).append("</h2>\n");
+        if (apt) {
+            // 공모주는 지역 개념이 없어 아파트에만 붙인다.
+            b.append("""
+                    <div class="filter">
+                      <select id="sido"><option value="">시·도 전체</option></select>
+                      <select id="gugun"><option value="">시·군·구 전체</option></select>
+                      <span id="cnt"></span>
+                    </div>
+                    """);
+        }
         boolean any = false;
         for (Item it : all) {
             if (!it.key().startsWith(prefix)) continue;
             any = true;
             String[] lines = it.text().split("\n");
             String head = lines[0];   // 첫 줄이 이름
-            String[] s = badge(it, today);   // [카드 클래스, 태그 클래스, 문구]
-            b.append("<div class=\"card ").append(s[0]).append("\">")
+            String[] s = badge(it, today);   // [카드 클래스, 태그 클래스, 문구, 이모지]
+            b.append("<div class=\"card ").append(s[0]).append("\"");
+            if (apt) {   // 필터가 읽는다. 값이 비어 있어도 속성 자체는 항상 남긴다.
+                b.append(" data-sido=\"").append(htmlEsc(it.sido()))
+                        .append("\" data-gugun=\"").append(htmlEsc(it.gugun())).append("\"");
+            }
+            b.append(">")
                     .append("<span class=\"tag ").append(s[1]).append("\">")
                     .append(s[2]).append("</span>")
                     .append("<b>").append(htmlEsc(head)).append("</b>");
@@ -684,11 +771,11 @@ public class Cheongyak {
         check(parseApt(recs, List.of(), today).get(1).start().equals("2026-08-30"), "접수시작일 우선");
 
         // 상태 판정과 정렬: 접수 중(임박한 마감 순) 먼저, 그다음 예정(빨리 시작하는 순)
-        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "오늘마감");
-        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "내일마감");
-        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "접수중");
-        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "곧시작");
-        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "나중시작");
+        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "서울", "마포구", "오늘마감");
+        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "서울", "마포구", "내일마감");
+        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "경기", "성남시", "접수중");
+        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "경기", "", "곧시작");
+        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "인천", "연수구", "나중시작");
         check(badge(urgent, today)[2].equals("오늘 마감"), "오늘 마감 배지");
         check(badge(tmr, today)[2].equals("내일 마감"), "내일 마감 배지");
         check(badge(open, today)[2].equals("접수중"), "접수중 배지");
@@ -710,9 +797,10 @@ public class Cheongyak {
         check(splitCsv(" 111 ,222,, 333 ").equals(List.of("111", "222", "333")), "쉼표 목록 파싱");
         check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
         // 메시지 구성: 종류별 머리말 + 하단 웹 주소
-        List<Item> mixed = List.of(new Item("apt:1", "2026-08-01", "2026-08-20", "가나아파트\n서울"),
-                new Item("ipo:x", "2026-08-02", "2026-08-21", "가나전자\n청약일 ..."),
-                new Item("ipo:y", "2026-08-03", "2026-08-22", "다라전자\n청약일 ..."));
+        List<Item> mixed = List.of(
+                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "가나아파트\n서울"),
+                new Item("ipo:x", "2026-08-02", "2026-08-21", "", "", "가나전자\n청약일 ..."),
+                new Item("ipo:y", "2026-08-03", "2026-08-22", "", "", "다라전자\n청약일 ..."));
         List<String> msg = compose(mixed, "https://example.com/", today);
         check(msg.size() == 1, "짧으면 한 통");
         String m = msg.get(0);
@@ -729,14 +817,22 @@ public class Cheongyak {
         check(withBadge(urgent, today).startsWith("🔴 오늘 마감 · 오늘마감"), "메시지 배지 - 오늘 마감");
         check(withBadge(open, today).startsWith("🟢 접수중 · 접수중"), "메시지 배지 - 접수중");
         check(withBadge(soon1, today).startsWith("🟠 예정 · 곧시작"), "메시지 배지 - 예정");
-        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "이름\n둘째줄\n셋째줄"), today)
+        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "서울", "중구",
+                "이름\n둘째줄\n셋째줄"), today)
                 .endsWith("\n둘째줄\n셋째줄"), "첫 줄에만 붙고 나머지는 그대로");
         check(m.contains("🟢 접수중 · 가나아파트"), "실제 메시지에 배지 반영");
+
+        // 시·군·구 추출 (API 에 필드가 없어 주소를 자른다)
+        check(gugunOf("서울특별시 영등포구 신길동 413-8번지 일원").equals("영등포구"), "서울 구");
+        check(gugunOf("경기도 성남시 수정구 신흥동 81-8").equals("성남시"), "특례시는 시까지만");
+        check(gugunOf("인천광역시 연수구 송도동").equals("연수구"), "인천 구");
+        check(gugunOf("세종특별자치시 다솜동 5204-1번지").isEmpty(), "시·군·구 단계가 없으면 빈 값");
+        check(gugunOf("").isEmpty() && gugunOf("주소미상").isEmpty(), "형식 어긋나면 빈 값");
 
         // 상한 초과 시 분할 + 잘린 섹션에 머리말 재부착
         List<Item> many = new ArrayList<>();
         for (int i = 0; i < 200; i++) {
-            many.add(new Item("ipo:k" + i, "2026-01-01", "2026-12-31", "가".repeat(60)));
+            many.add(new Item("ipo:k" + i, "2026-01-01", "2026-12-31", "", "", "가".repeat(60)));
         }
         List<String> parts = compose(many, "https://example.com/", today);
         check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
