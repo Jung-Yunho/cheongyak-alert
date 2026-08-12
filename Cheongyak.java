@@ -380,9 +380,13 @@ public class Cheongyak {
                   .empty { color: #888; }
                   .filter { display: flex; gap: 8px; align-items: center;
                             flex-wrap: wrap; margin-bottom: 14px; }
+                  /* Canvas/CanvasText 는 color-scheme 를 따라가는 시스템 색이다.
+                     transparent + inherit 을 쓰면 펼친 목록이 OS 가 그리는 밝은 팝업인데
+                     글자만 흰색을 물려받아 다크 모드에서 안 보인다. */
                   .filter select { font: inherit; font-size: .9rem; padding: 5px 8px;
                                    border-radius: 7px; border: 1px solid #8886;
-                                   background: transparent; color: inherit; }
+                                   background: Canvas; color: CanvasText; }
+                  .filter select option { background: Canvas; color: CanvasText; }
                   .filter #cnt { color: #888; font-size: .85rem; }
                 </style>
                 """);
