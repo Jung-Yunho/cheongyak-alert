@@ -267,7 +267,7 @@ public class Cheongyak {
      * 보낼 메시지를 만든다. 종류별로 묶어 머리말을 달고, 맨 끝에 웹 주소를 붙인다.
      * 상한을 넘으면 여러 개로 나누고, 나뉜 덩어리에는 머리말을 다시 달아 맥락을 잃지 않게 한다.
      */
-    static List<String> compose(List<Item> items, String webUrl) {
+    static List<String> compose(List<Item> items, String webUrl, String today) {
         List<String> parts = new ArrayList<>();
         StringBuilder buf = new StringBuilder();
 
@@ -280,12 +280,13 @@ public class Cheongyak {
             String head = title + "\n" + RULE;
             boolean headPending = true;
             for (Item it : sub) {
-                String block = (headPending ? head + "\n\n" : "") + it.text();
+                String body = withBadge(it, today);
+                String block = (headPending ? head + "\n\n" : "") + body;
                 if (buf.length() > 0 && buf.length() + block.length() + 2 > LIMIT) {
                     parts.add(buf.toString());
                     buf.setLength(0);
                     // 섹션 도중에 잘렸으면 새 덩어리에 머리말을 다시 단다.
-                    if (!headPending) block = title + " (이어서)\n" + RULE + "\n\n" + it.text();
+                    if (!headPending) block = title + " (이어서)\n" + RULE + "\n\n" + body;
                 }
                 if (buf.length() > 0) buf.append("\n\n");
                 buf.append(block);
@@ -310,9 +311,9 @@ public class Cheongyak {
      * 전원 실패일 때만 예외를 던져 seen.txt 기록을 막는다 — 그래야 다음 실행에 다시 시도한다.
      * 일부만 실패한 경우 기록은 남긴다. 안 그러면 성공한 사람이 같은 알림을 계속 다시 받는다.
      */
-    static void sendAll(String token, List<String> chatIds, List<Item> items, String webUrl)
-            throws IOException {
-        List<String> parts = compose(items, webUrl);
+    static void sendAll(String token, List<String> chatIds, List<Item> items,
+                        String webUrl, String today) throws IOException {
+        List<String> parts = compose(items, webUrl, today);
         List<String> failed = new ArrayList<>();
         for (String id : chatIds) {
             try {
@@ -404,17 +405,27 @@ public class Cheongyak {
     }
 
     /**
-     * 상태 배지. [카드 클래스, 태그 클래스, 문구].
+     * 상태 배지. [카드 클래스, 태그 클래스, 문구, 이모지].
+     * 앞의 둘은 웹 페이지가, 뒤의 둘은 텔레그램 메시지가 쓴다.
      * 마감된 건은 수집 단계에서 이미 빠지므로 여기서는 다루지 않는다.
      */
     static String[] badge(Item it, String today) {
-        if (rank(it, today) == 1) return new String[]{"", "t-soon", "예정"};
+        if (rank(it, today) == 1) return new String[]{"", "t-soon", "예정", "🟠"};
         String tomorrow = LocalDate.parse(today).plusDays(1).toString();
         if (!it.end().isEmpty() && it.end().compareTo(tomorrow) <= 0) {
             return new String[]{"urgent", "t-urgent",
-                    it.end().equals(today) ? "오늘 마감" : "내일 마감"};
+                    it.end().equals(today) ? "오늘 마감" : "내일 마감", "🔴"};
         }
-        return new String[]{"open", "t-open", "접수중"};
+        return new String[]{"open", "t-open", "접수중", "🟢"};
+    }
+
+    /** 메시지용 본문. 첫 줄(이름) 앞에 상태를 붙인다. */
+    static String withBadge(Item it, String today) {
+        String[] b = badge(it, today);
+        int nl = it.text().indexOf('\n');
+        String first = nl < 0 ? it.text() : it.text().substring(0, nl);
+        String rest = nl < 0 ? "" : it.text().substring(nl);
+        return b[3] + " " + b[2] + " · " + first + rest;
     }
 
     static String htmlEsc(String s) {
@@ -529,9 +540,9 @@ public class Cheongyak {
         if (dry) {
             // 실제로 나갈 메시지 그대로 찍는다.
             System.out.println(String.join("\n\n──────── 다음 메시지 ────────\n\n",
-                    compose(fresh, webUrl)));
+                    compose(fresh, webUrl, today)));
         } else {
-            sendAll(token, chats, fresh, webUrl);
+            sendAll(token, chats, fresh, webUrl, today);
             System.out.println(fresh.size() + "건 전송 (수신자 " + chats.size() + "명)");
             for (Item i : fresh) seen.add(i.key());
             saveSeen(seen);   // 전송에 성공한 뒤에만 기록한다
@@ -702,7 +713,7 @@ public class Cheongyak {
         List<Item> mixed = List.of(new Item("apt:1", "2026-08-01", "2026-08-20", "가나아파트\n서울"),
                 new Item("ipo:x", "2026-08-02", "2026-08-21", "가나전자\n청약일 ..."),
                 new Item("ipo:y", "2026-08-03", "2026-08-22", "다라전자\n청약일 ..."));
-        List<String> msg = compose(mixed, "https://example.com/");
+        List<String> msg = compose(mixed, "https://example.com/", today);
         check(msg.size() == 1, "짧으면 한 통");
         String m = msg.get(0);
         check(m.startsWith("🏢 아파트 1건"), "아파트 머리말이 먼저");
@@ -710,15 +721,24 @@ public class Cheongyak {
         check(m.indexOf("🏢") < m.indexOf("📈"), "아파트 -> 공모주 순서");
         check(m.endsWith("웹 브라우저에서 보기\nhttps://example.com/"), "맨 끝에 웹 주소");
         check(!m.contains("[아파트]") && !m.contains("[공모주]"), "말머리 중복 없음");
-        check(!compose(mixed, "").get(0).contains("웹 브라우저에서 보기"), "WEB_URL 없으면 링크 없음");
-        check(compose(List.of(), "https://example.com/").isEmpty(), "보낼 게 없으면 빈 목록");
+        check(!compose(mixed, "", today).get(0).contains("웹 브라우저에서 보기"),
+                "WEB_URL 없으면 링크 없음");
+        check(compose(List.of(), "https://example.com/", today).isEmpty(), "보낼 게 없으면 빈 목록");
+
+        // 메시지에도 상태 배지가 붙는다
+        check(withBadge(urgent, today).startsWith("🔴 오늘 마감 · 오늘마감"), "메시지 배지 - 오늘 마감");
+        check(withBadge(open, today).startsWith("🟢 접수중 · 접수중"), "메시지 배지 - 접수중");
+        check(withBadge(soon1, today).startsWith("🟠 예정 · 곧시작"), "메시지 배지 - 예정");
+        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "이름\n둘째줄\n셋째줄"), today)
+                .endsWith("\n둘째줄\n셋째줄"), "첫 줄에만 붙고 나머지는 그대로");
+        check(m.contains("🟢 접수중 · 가나아파트"), "실제 메시지에 배지 반영");
 
         // 상한 초과 시 분할 + 잘린 섹션에 머리말 재부착
         List<Item> many = new ArrayList<>();
         for (int i = 0; i < 200; i++) {
             many.add(new Item("ipo:k" + i, "2026-01-01", "2026-12-31", "가".repeat(60)));
         }
-        List<String> parts = compose(many, "https://example.com/");
+        List<String> parts = compose(many, "https://example.com/", today);
         check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
         for (String p : parts) check(p.length() <= LIMIT, "덩어리 크기 제한 (" + p.length() + ")");
         check(parts.get(1).startsWith("📈 공모주 200건 (이어서)"), "이어지는 덩어리에 머리말 재부착");
