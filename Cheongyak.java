@@ -533,16 +533,27 @@ public class Cheongyak {
                        margin: 0 0 6px; }
                   .sub { color: var(--muted); font-size: .8rem; margin-bottom: 20px; }
 
-                  /* 상단 요약. 오늘 뭘 봐야 하는지가 한 줄로 보이게 한다. */
+                  /* 상단 요약 겸 상태 필터. 오늘 뭘 봐야 하는지가 한 줄로 보이고,
+                     눌러서 그 상태만 볼 수 있다. */
                   .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
-                  .stat { background: var(--card); border: 1px solid var(--line);
-                          border-radius: 10px; padding: 8px 13px; box-shadow: var(--shadow); }
+                  .stat { font: inherit; cursor: pointer; color: inherit;
+                          background: var(--card); border: 1px solid var(--line);
+                          border-radius: 10px; padding: 8px 13px; box-shadow: var(--shadow);
+                          transition: border-color .12s, background .12s; }
+                  .stat:hover:not(:disabled) { border-color: var(--muted); }
+                  .stat:disabled { opacity: .45; cursor: default; }
                   .stat b { font-size: 1.15rem; font-variant-numeric: tabular-nums;
                             margin-right: 5px; }
                   .stat span { color: var(--muted); font-size: .78rem; }
                   .s-urgent b { color: var(--urgent); }
                   .s-open b { color: var(--open); }
                   .s-soon b { color: var(--soon); }
+                  /* 선택된 칩. 테두리만 진하게 해서 어느 걸 눌렀는지 바로 보이게 한다. */
+                  .stat.on { border-color: currentColor; }
+                  .s-urgent.on { border-color: var(--urgent); background: var(--urgent-bg); }
+                  .s-open.on   { border-color: var(--open);   background: var(--open-bg); }
+                  .s-soon.on   { border-color: var(--soon);   background: var(--soon-bg); }
+                  .stat.on:not([class*="s-"]) { border-color: var(--fg); }
 
                   .filter { position: sticky; top: 0; z-index: 5;
                             display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
@@ -593,10 +604,13 @@ public class Cheongyak {
                   .rows { font-size: .83rem; color: var(--muted); }
                   .rows p { margin: 0 0 3px; }
                   .rows .k { display: inline-block; min-width: 56px; opacity: .75; }
-                  .rows a { color: inherit; }
-                  .card a { text-decoration-color: var(--line);
-                            text-underline-offset: 2px; }
-                  .card a:hover { color: var(--fg); text-decoration-color: currentColor; }
+                  /* 주소가 지도로 연결된다는 걸 보이게 한다. 그냥 글로 보고 지나치기 쉽다. */
+                  .map { color: inherit; display: inline-flex; gap: 5px;
+                         align-items: baseline; text-decoration: underline dotted;
+                         text-decoration-color: var(--muted); text-underline-offset: 3px; }
+                  .map .pin { flex: none; font-size: .95em; }
+                  .map:hover { color: var(--fg); text-decoration-style: solid;
+                               text-decoration-color: currentColor; }
                   .notice { display: inline-block; margin-top: 9px; font-size: .8rem;
                             font-weight: 600; color: var(--fg); text-decoration: none;
                             border: 1px solid var(--line); border-radius: 8px;
@@ -647,16 +661,41 @@ public class Cheongyak {
                     gugun.value = '';
                     gugun.style.display = s ? '' : 'none';
                   }
+                  // 지역 필터와 상태 필터는 AND 로 걸린다.
+                  // 상단 칩의 숫자는 "지금 지역 선택 안에서" 몇 건인지를 보여준다.
+                  // 전체 건수를 그대로 두면 서울만 골랐는데 칩은 19건이라 앞뒤가 안 맞는다.
+                  var chips = [].slice.call(document.querySelectorAll('.stat'));
+                  var status = '';
+
                   function apply() {
                     var s = sido.value, g = gugun.value, n = 0;
+                    var count = { '': 0, urgent: 0, open: 0, soon: 0 };
                     cards.forEach(function (c) {
-                      var ok = (!s || c.dataset.sido === s)
-                            && (!g || !c.dataset.gugun || c.dataset.gugun === g);
+                      var inRegion = (!s || c.dataset.sido === s)
+                                  && (!g || !c.dataset.gugun || c.dataset.gugun === g);
+                      if (inRegion) { count['']++; count[c.dataset.status]++; }
+                      var ok = inRegion && (!status || c.dataset.status === status);
                       c.style.display = ok ? '' : 'none';
                       if (ok) n++;
                     });
+                    chips.forEach(function (chip) {
+                      var k = chip.dataset.status;
+                      chip.querySelector('b').textContent = count[k];
+                      chip.classList.toggle('on', k === status);
+                      // 0건인 상태는 눌러도 빈 화면만 나오므로 막는다. "전체" 는 항상 열어둔다.
+                      chip.disabled = k !== '' && count[k] === 0;
+                    });
                     cnt.textContent = n + '건';
                   }
+
+                  chips.forEach(function (chip) {
+                    chip.onclick = function () {
+                      // 같은 칩을 다시 누르면 해제된다. 전체로 돌아가는 길을 하나 더 둔다.
+                      status = (status === chip.dataset.status) ? '' : chip.dataset.status;
+                      apply();
+                    };
+                  });
+
                   sido.innerHTML = options(cards.map(function (c) { return c.dataset.sido; }),
                                            '시·도 전체');
                   sido.onchange = function () { fillGugun(); apply(); };
@@ -684,16 +723,17 @@ public class Cheongyak {
             }
         }
         b.append("<div class=\"stats\">")
-                .append(stat("", items.size(), "전체"))
-                .append(stat("s-urgent", urgent, "마감 임박"))
-                .append(stat("s-open", open, "접수중"))
-                .append(stat("s-soon", soon, "예정"))
+                .append(stat("", "", items.size(), "전체"))
+                .append(stat("s-urgent", "urgent", urgent, "마감 임박"))
+                .append(stat("s-open", "open", open, "접수중"))
+                .append(stat("s-soon", "soon", soon, "예정"))
                 .append("</div>\n");
     }
 
-    static String stat(String cls, int n, String label) {
-        return "<div class=\"stat " + cls + "\"><b>" + n + "</b><span>"
-                + label + "</span></div>";
+    /** status 가 빈 값이면 "전체" 칩이다. 카드의 data-status 와 짝을 맞춘다. */
+    static String stat(String cls, String status, int n, String label) {
+        return "<button type=\"button\" class=\"stat " + cls + "\" data-status=\""
+                + status + "\"><b>" + n + "</b><span>" + label + "</span></button>";
     }
 
     static void section(StringBuilder b, List<Item> all, String today) {
@@ -715,6 +755,7 @@ public class Cheongyak {
             String cls = s[0].isEmpty() ? "soon" : s[0];
             // data-* 는 필터가 읽는다. 값이 비어 있어도 속성 자체는 항상 남긴다.
             b.append("<div class=\"card ").append(cls).append("\"")
+                    .append(" data-status=\"").append(cls).append("\"")
                     .append(" data-sido=\"").append(htmlEsc(it.sido()))
                     .append("\" data-gugun=\"").append(htmlEsc(it.gugun())).append("\">")
                     .append("<div class=\"head\"><div class=\"name\">")
@@ -749,9 +790,11 @@ public class Cheongyak {
                 if (!it.addr().isEmpty() && l.equals(it.addr())) {
                     // 주소는 지도 검색으로 연결한다. 좌표가 API 에 없어 지도를 직접 그리려면
                     // 지오코딩 키가 하나 더 필요한데, 링크면 그 비용 없이 목적을 채운다.
-                    b.append("<p><a href=\"").append(htmlEsc(mapUrl(l)))
-                            .append("\" target=\"_blank\" rel=\"noopener\">")
-                            .append(htmlEsc(l)).append("</a></p>");
+                    b.append("<p><a class=\"map\" href=\"").append(htmlEsc(mapUrl(l)))
+                            .append("\" target=\"_blank\" rel=\"noopener\"")
+                            .append(" title=\"네이버 지도에서 보기\">")
+                            .append("<span class=\"pin\" aria-hidden=\"true\">📍</span>")
+                            .append("<span>").append(htmlEsc(l)).append("</span></a></p>");
                 } else {
                     b.append("<p>").append(labeled(l)).append("</p>");
                 }
