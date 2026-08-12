@@ -75,10 +75,15 @@ public class Cheongyak {
      * sido  시·도. 웹 페이지 필터용
      * gugun 시·군·구. 위와 같음. 주소에서 못 읽으면 빈 문자열
      * addr  공급 주소. text 안에도 있지만, 페이지에서 이 줄만 지도 링크로 만들려고 따로 둔다
-     * text  실제로 보낼 내용
+     * price 분양가 범위. 없으면 빈 문자열
+     * units 공급 세대수. 없으면 빈 문자열
+     * text  텔레그램으로 보낼 내용 (위 값들이 줄 단위로 다 들어 있다)
+     *
+     * price/units 를 따로 두는 건 페이지에서 이 둘만 크게 강조하기 위해서다.
+     * 값을 판단하는 데 제일 먼저 보게 되는 정보라 본문 줄과 섞어두면 눈에 안 들어온다.
      */
-    record Item(String key, String start, String end,
-                String sido, String gugun, String addr, String text) {}
+    record Item(String key, String start, String end, String sido, String gugun,
+                String addr, String price, String units, String text) {}
 
     /** 0 = 접수 중(가장 급하다), 1 = 접수 예정. 마감된 건은 애초에 수집 단계에서 뺀다. */
     static int rank(Item it, String today) {
@@ -300,18 +305,23 @@ public class Cheongyak {
             String win = iso(f(r, "PRZWNER_PRESNATN_DE"));
             String noticeDe = iso(f(r, "RCRIT_PBLANC_DE"));
             List<String> lines = new ArrayList<>();
+            String price = or(prices.get(no), "");
+            String units = f(r, "TOT_SUPLY_HSHLDCO");
+            if (!units.matches("[1-9]\\d*")) units = "";   // 0 이나 빈 값은 표시하지 않는다
+            String addr = f(r, "HSSPLY_ADRES");
+
             lines.add(name);
             lines.add(join(" · ", area, f(r, "HOUSE_SECD_NM")));
-            lines.add(prefix("분양가 ", or(prices.get(no), "")));
-            lines.add(f(r, "HSSPLY_ADRES"));
+            lines.add(join(" · ", prefix("분양가 ", price),
+                    units.isEmpty() ? "" : units + "세대"));
+            lines.add(addr);
             lines.add(prefix("공고일 ", noticeDe));
             lines.add(bgn.isEmpty() && end.isEmpty() ? "" : "접수 " + bgn + " ~ " + end);
             lines.add(prefix("당첨발표 ", win));
             lines.add(f(r, "PBLANC_URL"));
             lines.removeIf(String::isBlank);
-            String addr = f(r, "HSSPLY_ADRES");
             out.add(new Item(prefix + no, or(bgn, noticeDe), end,
-                    area, gugunOf(addr), addr, String.join("\n", lines)));
+                    area, gugunOf(addr), addr, price, units, String.join("\n", lines)));
         }
         return out;
     }
@@ -476,46 +486,114 @@ public class Cheongyak {
                 <meta name="viewport" content="width=device-width,initial-scale=1">
                 <title>청약 알림</title>
                 <style>
-                  :root { color-scheme: light dark; }
-                  body { font: 16px/1.6 system-ui, "Malgun Gothic", sans-serif;
-                         max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
-                  h1 { font-size: 1.4rem; margin: 0 0 4px; }
-                  .sub { color: #888; font-size: .85rem; margin-bottom: 28px; }
-                  h2 { font-size: 1.1rem; margin: 32px 0 12px;
-                       border-bottom: 2px solid currentColor; padding-bottom: 6px; }
-                  .card { border: 1px solid #8883; border-radius: 10px;
-                          padding: 14px 16px; margin-bottom: 10px; }
-                  .card b { display: block; margin-bottom: 6px; font-size: 1.02rem; }
-                  .card div { color: #777; font-size: .9rem; }
-                  .card a { word-break: break-all; }
-                  .open { border-color: #3da35d; background: #3da35d14; }
-                  .urgent { border-color: #d94f4f; background: #d94f4f18; }
-                  .tag { float: right; font-size: .75rem; font-weight: 700;
-                         margin-left: 8px; white-space: nowrap; }
-                  .t-urgent { color: #d94f4f; }
-                  .t-open { color: #3da35d; }
-                  .t-soon { color: #e8a33d; }
-                  .empty { color: #888; }
-                  .filter { display: flex; gap: 8px; align-items: center;
-                            flex-wrap: wrap; margin-bottom: 14px; }
+                  /* 색은 라이트/다크 두 벌만 두고 나머지는 변수로 참조한다.
+                     값을 카드마다 흩어놓으면 나중에 톤을 바꿀 때 다 뒤져야 한다. */
+                  :root {
+                    color-scheme: light dark;
+                    --bg: #fbfbfd;  --fg: #16181d;  --muted: #6b7280;
+                    --card: #fff;   --line: #e5e7eb; --shadow: 0 1px 2px #0f172a0d;
+                    --urgent: #dc2626; --open: #15803d; --soon: #b45309;
+                    --urgent-bg: #fef2f2; --open-bg: #f0fdf4; --soon-bg: #fffbeb;
+                  }
+                  @media (prefers-color-scheme: dark) {
+                    :root {
+                      --bg: #0d0f13; --fg: #e8eaed; --muted: #9aa1ad;
+                      --card: #16191f; --line: #262b33; --shadow: none;
+                      --urgent: #f87171; --open: #4ade80; --soon: #fbbf24;
+                      --urgent-bg: #7f1d1d33; --open-bg: #14532d33; --soon-bg: #78350f33;
+                    }
+                  }
+                  * { box-sizing: border-box; }
+                  body { margin: 0; background: var(--bg); color: var(--fg);
+                         font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI",
+                               "Malgun Gothic", system-ui, sans-serif;
+                         -webkit-font-smoothing: antialiased; }
+                  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 16px 72px; }
+                  h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em;
+                       margin: 0 0 6px; }
+                  .sub { color: var(--muted); font-size: .8rem; margin-bottom: 20px; }
+
+                  /* 상단 요약. 오늘 뭘 봐야 하는지가 한 줄로 보이게 한다. */
+                  .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+                  .stat { background: var(--card); border: 1px solid var(--line);
+                          border-radius: 10px; padding: 8px 13px; box-shadow: var(--shadow); }
+                  .stat b { font-size: 1.15rem; font-variant-numeric: tabular-nums;
+                            margin-right: 5px; }
+                  .stat span { color: var(--muted); font-size: .78rem; }
+                  .s-urgent b { color: var(--urgent); }
+                  .s-open b { color: var(--open); }
+                  .s-soon b { color: var(--soon); }
+
+                  .filter { position: sticky; top: 0; z-index: 5;
+                            display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+                            padding: 10px 0; margin-bottom: 6px;
+                            background: var(--bg); border-bottom: 1px solid var(--line); }
                   /* Canvas/CanvasText 는 color-scheme 를 따라가는 시스템 색이다.
                      transparent + inherit 을 쓰면 펼친 목록이 OS 가 그리는 밝은 팝업인데
                      글자만 흰색을 물려받아 다크 모드에서 안 보인다. */
-                  .filter select { font: inherit; font-size: .9rem; padding: 5px 8px;
-                                   border-radius: 7px; border: 1px solid #8886;
+                  .filter select { font: inherit; font-size: .85rem; padding: 7px 10px;
+                                   border-radius: 9px; border: 1px solid var(--line);
                                    background: Canvas; color: CanvasText; }
                   .filter select option { background: Canvas; color: CanvasText; }
-                  .filter #cnt { color: #888; font-size: .85rem; }
+                  #cnt { color: var(--muted); font-size: .8rem; margin-left: auto; }
+
+                  .list { display: grid; gap: 12px; margin-top: 14px; }
+                  @media (min-width: 760px) { .list { grid-template-columns: 1fr 1fr; } }
+
+                  .card { background: var(--card); border: 1px solid var(--line);
+                          border-left: 3px solid var(--line);
+                          border-radius: 12px; padding: 15px 17px;
+                          box-shadow: var(--shadow); }
+                  .card.urgent { border-left-color: var(--urgent); }
+                  .card.open   { border-left-color: var(--open); }
+                  .card.soon   { border-left-color: var(--soon); }
+
+                  .head { display: flex; gap: 10px; align-items: flex-start;
+                          margin-bottom: 3px; }
+                  .name { font-weight: 650; font-size: 1rem; letter-spacing: -.01em;
+                          line-height: 1.35; flex: 1; }
+                  .tag { flex: none; font-size: .72rem; font-weight: 700;
+                         padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+                  .t-urgent { color: var(--urgent); background: var(--urgent-bg); }
+                  .t-open   { color: var(--open);   background: var(--open-bg); }
+                  .t-soon   { color: var(--soon);   background: var(--soon-bg); }
+
+                  .where { color: var(--muted); font-size: .8rem; margin-bottom: 10px; }
+
+                  /* 분양가·세대수는 판단에 제일 먼저 보는 값이라 본문과 분리해 크게 둔다. */
+                  .key { display: flex; gap: 16px; flex-wrap: wrap;
+                         padding: 9px 0 11px; border-top: 1px solid var(--line);
+                         border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+                  .key div { font-size: .68rem; color: var(--muted);
+                             text-transform: uppercase; letter-spacing: .05em; }
+                  .key strong { display: block; margin-top: 2px; font-size: .95rem;
+                                font-weight: 650; color: var(--fg);
+                                font-variant-numeric: tabular-nums; }
+
+                  .rows { font-size: .83rem; color: var(--muted); }
+                  .rows p { margin: 0 0 3px; }
+                  .rows .k { display: inline-block; min-width: 56px; opacity: .75; }
+                  .rows a { color: inherit; }
+                  .card a { text-decoration-color: var(--line);
+                            text-underline-offset: 2px; }
+                  .card a:hover { color: var(--fg); text-decoration-color: currentColor; }
+                  .notice { display: inline-block; margin-top: 9px; font-size: .8rem;
+                            font-weight: 600; color: var(--fg); text-decoration: none;
+                            border: 1px solid var(--line); border-radius: 8px;
+                            padding: 5px 11px; }
+                  .notice:hover { border-color: var(--muted); }
+                  .empty { color: var(--muted); }
                 </style>
                 """);
-        b.append("<h1>청약 알림</h1>\n<div class=\"sub\">갱신 ")
+        b.append("<div class=\"wrap\">\n<h1>청약 알림</h1>\n<div class=\"sub\">갱신 ")
                 .append(htmlEsc(java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Seoul"))
                         .format(java.time.format.DateTimeFormatter
                                 .ofPattern("yyyy-MM-dd HH:mm"))))
-                .append(" KST · 출처 청약홈")
-                .append(" · 접수 마감된 건은 빼고 보여줍니다</div>\n");
+                .append(" KST · 출처 청약홈 · 접수 마감된 건은 빼고 보여줍니다</div>\n");
 
-        section(b, "아파트", items, today);   // 호출 쪽에서 정렬해서 넘긴다
+        stats(b, items, today);
+        section(b, items, today);   // 호출 쪽에서 정렬해서 넘긴다
+        b.append("</div>\n");
 
         // 정적 페이지라 필터는 브라우저에서 보이고 숨기는 방식이다.
         // 시·군·구 목록은 실제로 실린 카드에서 만들어 빈 항목이 안 생기게 한다.
@@ -575,9 +653,30 @@ public class Cheongyak {
         System.out.println("페이지 생성: " + out.toAbsolutePath().normalize());
     }
 
-    static void section(StringBuilder b, String title, List<Item> all,
-                        String today) {
-        b.append("<h2>").append(title).append("</h2>\n");
+    /** 상단 요약. 오늘 뭘 봐야 하는지가 한 줄로 보이게 한다. */
+    static void stats(StringBuilder b, List<Item> items, String today) {
+        int urgent = 0, open = 0, soon = 0;
+        for (Item it : items) {
+            switch (badge(it, today)[1]) {
+                case "t-urgent" -> urgent++;
+                case "t-open" -> open++;
+                default -> soon++;
+            }
+        }
+        b.append("<div class=\"stats\">")
+                .append(stat("", items.size(), "전체"))
+                .append(stat("s-urgent", urgent, "마감 임박"))
+                .append(stat("s-open", open, "접수중"))
+                .append(stat("s-soon", soon, "예정"))
+                .append("</div>\n");
+    }
+
+    static String stat(String cls, int n, String label) {
+        return "<div class=\"stat " + cls + "\"><b>" + n + "</b><span>"
+                + label + "</span></div>";
+    }
+
+    static void section(StringBuilder b, List<Item> all, String today) {
         b.append("""
                 <div class="filter">
                   <select id="sido"><option value="">시·도 전체</option></select>
@@ -585,38 +684,80 @@ public class Cheongyak {
                   <span id="cnt"></span>
                 </div>
                 """);
-        boolean any = false;
+        if (all.isEmpty()) {
+            b.append("<p class=\"empty\">수집된 건이 없습니다.</p>\n");
+            return;
+        }
+        b.append("<div class=\"list\">\n");
         for (Item it : all) {
-            any = true;
             String[] lines = it.text().split("\n");
-            String head = lines[0];   // 첫 줄이 이름
             String[] s = badge(it, today);   // [카드 클래스, 태그 클래스, 문구, 이모지]
+            String cls = s[0].isEmpty() ? "soon" : s[0];
             // data-* 는 필터가 읽는다. 값이 비어 있어도 속성 자체는 항상 남긴다.
-            b.append("<div class=\"card ").append(s[0]).append("\"")
+            b.append("<div class=\"card ").append(cls).append("\"")
                     .append(" data-sido=\"").append(htmlEsc(it.sido()))
-                    .append("\" data-gugun=\"").append(htmlEsc(it.gugun())).append("\"")
-                    .append(">")
+                    .append("\" data-gugun=\"").append(htmlEsc(it.gugun())).append("\">")
+                    .append("<div class=\"head\"><div class=\"name\">")
+                    .append(htmlEsc(lines[0])).append("</div>")
                     .append("<span class=\"tag ").append(s[1]).append("\">")
-                    .append(s[2]).append("</span>")
-                    .append("<b>").append(htmlEsc(head)).append("</b>");
-            for (int i = 1; i < lines.length; i++) {
+                    .append(s[2]).append("</span></div>");
+
+            // 둘째 줄은 "지역 · 구분". 구를 알면 시·도와 함께 보여준다.
+            b.append("<div class=\"where\">")
+                    .append(htmlEsc(lines.length > 1 ? withGugun(lines[1], it) : ""))
+                    .append("</div>");
+
+            if (!it.price().isEmpty() || !it.units().isEmpty()) {
+                b.append("<div class=\"key\">");
+                if (!it.price().isEmpty()) {
+                    b.append("<div>분양가<strong>").append(htmlEsc(it.price()))
+                            .append("</strong></div>");
+                }
+                if (!it.units().isEmpty()) {
+                    b.append("<div>공급규모<strong>").append(htmlEsc(it.units()))
+                            .append("세대</strong></div>");
+                }
+                b.append("</div>");
+            }
+
+            b.append("<div class=\"rows\">");
+            String notice = "";
+            for (int i = 2; i < lines.length; i++) {
                 String l = lines[i];
-                String html;
-                if (l.startsWith("http")) {
-                    html = "<a href=\"" + htmlEsc(l) + "\">공고 보기</a>";
-                } else if (!it.addr().isEmpty() && l.equals(it.addr())) {
+                if (l.startsWith("http")) { notice = l; continue; }
+                if (l.startsWith("분양가") || l.contains("세대")) continue;   // 위에서 이미 크게 보여줬다
+                if (!it.addr().isEmpty() && l.equals(it.addr())) {
                     // 주소는 지도 검색으로 연결한다. 좌표가 API 에 없어 지도를 직접 그리려면
                     // 지오코딩 키가 하나 더 필요한데, 링크면 그 비용 없이 목적을 채운다.
-                    html = "<a href=\"" + htmlEsc(mapUrl(l))
-                            + "\" target=\"_blank\" rel=\"noopener\">" + htmlEsc(l) + "</a>";
+                    b.append("<p><a href=\"").append(htmlEsc(mapUrl(l)))
+                            .append("\" target=\"_blank\" rel=\"noopener\">")
+                            .append(htmlEsc(l)).append("</a></p>");
                 } else {
-                    html = htmlEsc(l);
+                    b.append("<p>").append(labeled(l)).append("</p>");
                 }
-                b.append("<div>").append(html).append("</div>");
+            }
+            b.append("</div>");
+            if (!notice.isEmpty()) {
+                b.append("<a class=\"notice\" href=\"").append(htmlEsc(notice))
+                        .append("\" target=\"_blank\" rel=\"noopener\">공고 보기</a>");
             }
             b.append("</div>\n");
         }
-        if (!any) b.append("<p class=\"empty\">수집된 건이 없습니다.</p>\n");
+        b.append("</div>\n");
+    }
+
+    /** "접수 2026-08-18 ~ 2026-08-21" -> 앞머리를 흐리게 해서 값이 먼저 읽히게 한다. */
+    static String labeled(String line) {
+        int i = line.indexOf(' ');
+        if (i <= 0) return htmlEsc(line);
+        return "<span class=\"k\">" + htmlEsc(line.substring(0, i)) + "</span>"
+                + htmlEsc(line.substring(i + 1));
+    }
+
+    /** "서울 · APT" 에 구를 끼워 "서울 영등포구 · APT" 로. 구를 모르면 그대로 둔다. */
+    static String withGugun(String where, Item it) {
+        if (it.gugun().isEmpty() || !where.startsWith(it.sido())) return where;
+        return it.sido() + " " + it.gugun() + where.substring(it.sido().length());
     }
 
     /**
@@ -889,8 +1030,14 @@ public class Cheongyak {
         check(priceRange(73700, 299900).equals("7.4억 ~ 30.0억"), "다르면 범위로");
         List<Item> priced = parseApt(recs, List.of("서울"), today, "apt:",
                 Map.of("1", "11.8억 ~ 14.5억"));
-        check(priced.get(0).text().contains("\n분양가 11.8억 ~ 14.5억\n"), "분양가 줄 삽입");
-        check(!seoul.get(0).text().contains("분양가"), "금액 없으면 그 줄 자체가 없다");
+        // 테스트 레코드 1번은 TOT_SUPLY_HSHLDCO=594 라 세대수가 같은 줄에 붙는다
+        check(priced.get(0).text().contains("\n분양가 11.8억 ~ 14.5억 · 594세대\n"), "분양가+세대수 줄");
+        check(priced.get(0).price().equals("11.8억 ~ 14.5억") && priced.get(0).units().equals("594"),
+                "분양가·세대수를 필드로도 들고 있다");
+        check(!seoul.get(0).text().contains("분양가"), "금액 없으면 그 줄에 분양가가 안 나온다");
+        check(seoul.get(0).text().contains("594세대"), "금액이 없어도 세대수는 나온다");
+        check(parseApt(recs, List.of(), today, "apt:").get(1).units().isEmpty(),
+                "세대수 필드가 없으면 빈 값");
 
         check(esc("따\"옴\\표\n").equals("따\\\"옴\\\\표\\n"), "JSON 이스케이프");
         check(unescape("\\uD55C\\uAE00 \\\"인용\\\"").equals("한글 \"인용\""), "JSON 이스케이프 해제");
@@ -900,11 +1047,11 @@ public class Cheongyak {
         check(parseApt(recs, List.of(), today, "apt:").get(1).start().equals("2026-08-30"), "접수시작일 우선");
 
         // 상태 판정과 정렬: 접수 중(임박한 마감 순) 먼저, 그다음 예정(빨리 시작하는 순)
-        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "서울", "마포구", "", "오늘마감");
-        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "서울", "마포구", "", "내일마감");
-        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "경기", "성남시", "", "접수중");
-        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "경기", "", "", "곧시작");
-        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "인천", "연수구", "", "나중시작");
+        Item urgent = new Item("apt:u", "2026-08-01", "2026-08-12", "서울", "마포구", "", "", "", "오늘마감");
+        Item tmr    = new Item("apt:t", "2026-08-01", "2026-08-13", "서울", "마포구", "", "", "", "내일마감");
+        Item open   = new Item("apt:o", "2026-08-01", "2026-08-20", "경기", "성남시", "", "", "", "접수중");
+        Item soon1  = new Item("apt:s1", "2026-08-18", "2026-08-21", "경기", "", "", "", "", "곧시작");
+        Item soon2  = new Item("apt:s2", "2026-08-31", "2026-09-08", "인천", "연수구", "", "", "", "나중시작");
         check(badge(urgent, today)[2].equals("오늘 마감"), "오늘 마감 배지");
         check(badge(tmr, today)[2].equals("내일 마감"), "내일 마감 배지");
         check(badge(open, today)[2].equals("접수중"), "접수중 배지");
@@ -951,9 +1098,9 @@ public class Cheongyak {
         // 페이지는 소스(키 접두어)와 무관하게 전부 싣는다.
         // 한때 "apt:" 로만 걸러서 무순위 건이 페이지에서만 통째로 빠진 적이 있다.
         StringBuilder page = new StringBuilder();
-        section(page, "아파트", List.of(
-                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "분양건\n서울"),
-                new Item("rem:2", "2026-08-01", "2026-08-20", "인천", "검단구", "", "무순위건\n인천")), today);
+        section(page, List.of(
+                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "", "", "분양건\n서울"),
+                new Item("rem:2", "2026-08-01", "2026-08-20", "인천", "검단구", "", "", "", "무순위건\n인천")), today);
         check(page.indexOf("분양건") > 0 && page.indexOf("무순위건") > 0, "두 소스 모두 페이지에 실림");
         check(page.indexOf("data-sido=\"인천\" data-gugun=\"검단구\"") > 0, "무순위에도 필터 속성");
         check(argValue(List.of("--html", "docs/index.html"), "--html").equals("docs/index.html")
@@ -964,8 +1111,8 @@ public class Cheongyak {
         check(splitCsv(null).isEmpty() && splitCsv("  ").isEmpty(), "빈 목록");
         // 메시지 구성: 머리말 + 건수 + 하단 웹 주소
         List<Item> mixed = List.of(
-                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "가나아파트\n서울"),
-                new Item("apt:2", "2026-08-02", "2026-08-21", "경기", "성남시", "", "다라아파트\n경기"));
+                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "", "", "", "가나아파트\n서울"),
+                new Item("apt:2", "2026-08-02", "2026-08-21", "경기", "성남시", "", "", "", "다라아파트\n경기"));
         List<String> msg = compose(mixed, "https://example.com/", today);
         check(msg.size() == 1, "짧으면 한 통");
         String m = msg.get(0);
@@ -979,7 +1126,7 @@ public class Cheongyak {
         check(withBadge(urgent, today).startsWith("🔴 오늘 마감 · 오늘마감"), "메시지 배지 - 오늘 마감");
         check(withBadge(open, today).startsWith("🟢 접수중 · 접수중"), "메시지 배지 - 접수중");
         check(withBadge(soon1, today).startsWith("🟠 예정 · 곧시작"), "메시지 배지 - 예정");
-        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "서울", "중구", "", "이름\n둘째줄\n셋째줄"), today)
+        check(withBadge(new Item("apt:x", "2026-08-01", "2026-08-20", "서울", "중구", "", "", "", "이름\n둘째줄\n셋째줄"), today)
                 .endsWith("\n둘째줄\n셋째줄"), "첫 줄에만 붙고 나머지는 그대로");
         check(m.contains("🟢 접수중 · 가나아파트"), "실제 메시지에 배지 반영");
 
@@ -993,7 +1140,7 @@ public class Cheongyak {
         // 상한 초과 시 분할 + 잘린 덩어리에 머리말 재부착
         List<Item> many = new ArrayList<>();
         for (int i = 0; i < 200; i++) {
-            many.add(new Item("apt:k" + i, "2026-01-01", "2026-12-31", "서울", "중구", "", "가".repeat(60)));
+            many.add(new Item("apt:k" + i, "2026-01-01", "2026-12-31", "서울", "중구", "", "", "", "가".repeat(60)));
         }
         List<String> parts = compose(many, "https://example.com/", today);
         check(parts.size() > 1, "4096자 넘으면 나눠 보낸다");
