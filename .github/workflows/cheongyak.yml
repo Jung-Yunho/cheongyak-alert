@@ -30,6 +30,7 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           APPLYHOME_KEY: ${{ secrets.APPLYHOME_KEY }}
+          # 안 만들면 빈 값 -> 기본 "서울,경기,인천". 전국을 보려면 값을 "전국" 으로.
           APT_REGIONS: ${{ vars.APT_REGIONS }}
         run: |
           java -Dfile.encoding=UTF-8 -Dcheongyak.dir=. \

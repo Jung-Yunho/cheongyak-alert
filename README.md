@@ -26,7 +26,13 @@ setx APT_REGIONS "서울,경기"
 ```
 
 - `APPLYHOME_KEY` — 없으면 아파트를 건너뛰고 공모주만 알린다.
-- `APT_REGIONS` — 비워두면 전국. 값은 청약홈의 공급지역명(`서울`, `경기`, `부산` …)과 부분 일치로 비교한다.
+- `APT_REGIONS` — **안 정하면 `서울,경기,인천`** (수도권). 전국을 보려면 `전국` 이라고 쓴다.
+  값은 청약홈의 공급지역명과 부분 일치로 비교한다. 실제 응답 1000건 기준 지역명은 아래가 전부다.
+
+  `경기` `서울` `부산` `인천` `충남` `울산` `경남` `대전` `강원` `광주`
+  `전북` `경북` `충북` `전남` `대구` `제주` `세종`
+
+  **`서울특별시` 가 아니라 `서울` 처럼 짧은 표기다.** 긴 이름을 넣으면 아무것도 안 걸린다.
 
 텔레그램 토큰은 [@BotFather](https://t.me/BotFather) 에서 `/newbot` 으로 받는다.
 채팅 ID 는 그 봇에게 아무 메시지나 보낸 뒤
@@ -65,7 +71,8 @@ Actions (cron) ── Cheongyak.java ── 텔레그램 전송
    결과를 커밋하므로 다른 프로젝트와 섞으면 이력이 지저분해진다.)
 2. **Settings → Secrets and variables → Actions**
    - `Secrets` 탭: `TG_TOKEN`, `TG_CHAT_ID`, `APPLYHOME_KEY`
-   - `Variables` 탭: `APT_REGIONS` (예 `서울,경기`. 전국이면 안 만들어도 된다)
+   - `Variables` 탭: `APT_REGIONS` — **안 만들면 `서울,경기,인천`** 이 기본이다.
+     다른 지역을 보고 싶을 때만 만든다 (전국이면 값을 `전국` 으로).
 3. **Settings → Pages** → Source: `Deploy from a branch` → Branch: `main` / 폴더 `/docs`
 4. **Actions 탭 → 청약 알림 → Run workflow** 로 한 번 수동 실행해 확인한다.
 5. 주소는 `https://<사용자명>.github.io/<저장소명>/` 이다.

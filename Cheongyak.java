@@ -10,7 +10,7 @@
  *   TG_TOKEN       텔레그램 봇 토큰            (필수)
  *   TG_CHAT_ID     받을 채팅 ID                (필수)
  *   APPLYHOME_KEY  data.go.kr 개인 API 인증키  (없으면 아파트 건너뜀)
- *   APT_REGIONS    지역 필터, 예 "서울,경기"   (비우면 전체)
+ *   APT_REGIONS    지역 필터 (안 정하면 "서울,경기,인천". 전국을 보려면 "전국")
  *
  * 외부 라이브러리를 쓰지 않는다. JDK 에 JSON 파서가 없어서 응답을 정규식으로 읽는데,
  * 청약홈 응답이 중첩 없는 평면 구조라 가능하다(실제 응답 200건으로 확인).
@@ -44,6 +44,10 @@ public class Cheongyak {
     static final String IPO_URL = "http://www.38.co.kr/html/fund/index.htm?o=k";
     static final String APT_URL =
             "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancDetail";
+
+    // 청약홈 SUBSCRPT_AREA_CODE_NM 은 "서울" "경기" "인천" 처럼 짧은 표기다
+    // ("서울특별시" 가 아니다). 실제 응답 1000건에서 확인한 값.
+    static final String DEFAULT_REGIONS = "서울,경기,인천";
 
     /**
      * 알림 한 건.
@@ -343,9 +347,11 @@ public class Cheongyak {
 
         String token = System.getenv("TG_TOKEN"), chat = System.getenv("TG_CHAT_ID");
         String aptKey = System.getenv("APPLYHOME_KEY");
+        // 기본은 수도권만. 전국을 보려면 APT_REGIONS=전국 으로 둔다.
+        String regionEnv = or(System.getenv("APT_REGIONS"), DEFAULT_REGIONS);
         List<String> regions = new ArrayList<>();
-        for (String g : or(System.getenv("APT_REGIONS"), "").split(",")) {
-            if (!g.isBlank()) regions.add(g.trim());
+        if (!regionEnv.trim().equals("전국")) {
+            for (String g : regionEnv.split(",")) if (!g.isBlank()) regions.add(g.trim());
         }
         boolean dry = a.contains("--dry");
         if (!dry && (isBlank(token) || isBlank(chat))) {
@@ -369,7 +375,8 @@ public class Cheongyak {
         } else {
             try {
                 List<Item> got = fetchApt(aptKey, regions, today);
-                System.out.println("아파트: " + got.size() + "건 수집");
+                System.out.println("아파트: " + got.size() + "건 수집 ("
+                        + (regions.isEmpty() ? "전국" : String.join(",", regions)) + ")");
                 items.addAll(got);
             } catch (Exception e) {
                 System.out.println("아파트: 수집 실패 - " + e);
@@ -517,6 +524,9 @@ public class Cheongyak {
         List<Item> seoul = parseApt(recs, List.of("서울"), today);
         check(seoul.size() == 1 && seoul.get(0).key().equals("apt:1"), "지역+마감 필터");
         check(parseApt(recs, List.of(), today).size() == 2, "필터 없어도 마감건/번호없는건 제외");
+        check(parseApt(recs, List.of("서울", "경기", "인천"), today).size() == 1, "여러 지역 OR 매칭");
+        check(Arrays.asList(DEFAULT_REGIONS.split(",")).equals(List.of("서울", "경기", "인천")),
+                "기본 지역은 수도권 3곳");
 
         check(esc("따\"옴\\표\n").equals("따\\\"옴\\\\표\\n"), "JSON 이스케이프");
         check(unescape("\\uD55C\\uAE00 \\\"인용\\\"").equals("한글 \"인용\""), "JSON 이스케이프 해제");
