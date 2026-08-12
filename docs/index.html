@@ -15,48 +15,34 @@
   .card b { display: block; margin-bottom: 6px; font-size: 1.02rem; }
   .card div { color: #777; font-size: .9rem; }
   .card a { word-break: break-all; }
-  .soon { border-color: #e8a33d; background: #e8a33d18; }
-  .tag { float: right; font-size: .75rem; color: #e8a33d; font-weight: 600; }
+  .open { border-color: #3da35d; background: #3da35d14; }
+  .urgent { border-color: #d94f4f; background: #d94f4f18; }
+  .tag { float: right; font-size: .75rem; font-weight: 700;
+         margin-left: 8px; white-space: nowrap; }
+  .t-urgent { color: #d94f4f; }
+  .t-open { color: #3da35d; }
+  .t-soon { color: #e8a33d; }
   .empty { color: #888; }
 </style>
 <h1>청약 알림</h1>
-<div class="sub">갱신 2026-08-12 11:20 KST · 아파트는 청약홈, 공모주는 38커뮤니케이션</div>
+<div class="sub">갱신 2026-08-12 11:38 KST · 아파트는 청약홈, 공모주는 38커뮤니케이션 · 접수 마감된 건은 빼고 보여줍니다</div>
 <h2>아파트</h2>
-<div class="card soon"><span class="tag">예정</span><b>성남복정2 A1블록 신혼희망타운(공공분양)(본청약)</b><div>경기 · 신혼희망타운</div><div>경기도 성남시 수정구 신흥동 81-8</div><div>공고일 2026-08-10</div><div>접수 2026-08-31 ~ 2026-09-08</div><div>당첨발표 2026-09-17</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026820008&amp;pblancNo=2026820008">공고 보기</a></div></div>
-<div class="card soon"><span class="tag">예정</span><b>시흥거모 A-5블록 신혼희망타운(공공분양)(본청약)</b><div>경기 · 신혼희망타운</div><div>경기도 시흥시 거모동, 군자동 일원 시흥거모 공공주택지구 내 A-5블록</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-26</div><div>당첨발표 2026-09-02</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026820006&amp;pblancNo=2026820006">공고 보기</a></div></div>
-<div class="card soon"><span class="tag">예정</span><b>더샵 신길센트럴시티(조합원 취소분)</b><div>서울 · APT</div><div>서울특별시 영등포구 신길동 413-8번지 일원</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-21</div><div>당첨발표 2026-08-27</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000374&amp;pblancNo=2026000374">공고 보기</a></div></div>
-<div class="card soon"><span class="tag">예정</span><b>용인반도체클러스터 동일하이빌 파크밸리(D1-1블록)</b><div>경기 · APT</div><div>경기도 용인시 처인구 원삼면 용인 반도체 클러스터 일반산업단지 D1-1BL</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-21</div><div>당첨발표 2026-08-27</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000371&amp;pblancNo=2026000371">공고 보기</a></div></div>
-<div class="card soon"><span class="tag">예정</span><b>써밋 클라비온</b><div>서울 · APT</div><div>서울특별시 영등포구 신길동 3590번지 일원</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-21</div><div>당첨발표 2026-08-28</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000364&amp;pblancNo=2026000364">공고 보기</a></div></div>
-<div class="card soon"><span class="tag">예정</span><b>충정로역자이르네</b><div>서울 · APT</div><div>서울특별시 중구 중림동 157-2번지 일원</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-21</div><div>당첨발표 2026-08-31</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000358&amp;pblancNo=2026000358">공고 보기</a></div></div>
-<div class="card"><b>한강 푸르지오 리버프론트</b><div>경기 · APT</div><div>경기도 김포시 고촌읍 향산리 588-45번지 일원</div><div>공고일 2026-07-30</div><div>접수 2026-08-10 ~ 2026-08-12</div><div>당첨발표 2026-08-20</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000367&amp;pblancNo=2026000367">공고 보기</a></div></div>
+<div class="card urgent"><span class="tag t-urgent">오늘 마감</span><b>한강 푸르지오 리버프론트</b><div>경기 · APT</div><div>경기도 김포시 고촌읍 향산리 588-45번지 일원</div><div>공고일 2026-07-30</div><div>접수 2026-08-10 ~ 2026-08-12</div><div>당첨발표 2026-08-20</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000367&amp;pblancNo=2026000367">공고 보기</a></div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>시흥거모 A-5블록 신혼희망타운(공공분양)(본청약)</b><div>경기 · 신혼희망타운</div><div>경기도 시흥시 거모동, 군자동 일원 시흥거모 공공주택지구 내 A-5블록</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-26</div><div>당첨발표 2026-09-02</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026820006&amp;pblancNo=2026820006">공고 보기</a></div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>더샵 신길센트럴시티(조합원 취소분)</b><div>서울 · APT</div><div>서울특별시 영등포구 신길동 413-8번지 일원</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-21</div><div>당첨발표 2026-08-27</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000374&amp;pblancNo=2026000374">공고 보기</a></div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>용인반도체클러스터 동일하이빌 파크밸리(D1-1블록)</b><div>경기 · APT</div><div>경기도 용인시 처인구 원삼면 용인 반도체 클러스터 일반산업단지 D1-1BL</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-21</div><div>당첨발표 2026-08-27</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000371&amp;pblancNo=2026000371">공고 보기</a></div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>써밋 클라비온</b><div>서울 · APT</div><div>서울특별시 영등포구 신길동 3590번지 일원</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-21</div><div>당첨발표 2026-08-28</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000364&amp;pblancNo=2026000364">공고 보기</a></div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>충정로역자이르네</b><div>서울 · APT</div><div>서울특별시 중구 중림동 157-2번지 일원</div><div>공고일 2026-08-07</div><div>접수 2026-08-18 ~ 2026-08-21</div><div>당첨발표 2026-08-31</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000358&amp;pblancNo=2026000358">공고 보기</a></div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>성남복정2 A1블록 신혼희망타운(공공분양)(본청약)</b><div>경기 · 신혼희망타운</div><div>경기도 성남시 수정구 신흥동 81-8</div><div>공고일 2026-08-10</div><div>접수 2026-08-31 ~ 2026-09-08</div><div>당첨발표 2026-09-17</div><div><a href="https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026820008&amp;pblancNo=2026820008">공고 보기</a></div></div>
 <h2>공모주</h2>
-<div class="card soon"><span class="tag">예정</span><b>빅웨이브로보틱스</b><div>청약일 2026.09.16~09.17</div><div>공모가 20,000~24,000</div><div>주간사 유진투자증권,미래에셋증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>덕산넵코어스(구.넵코어스)</b><div>청약일 2026.09.16~09.17</div><div>공모가 12,400~14,600</div><div>주간사 대신증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>글로벌테크놀로지</b><div>청약일 2026.09.16~09.17</div><div>공모가 13,000~15,000</div><div>주간사 한국투자증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>와이즈플래닛컴퍼니</b><div>청약일 2026.09.14~09.15</div><div>공모가 10,000~12,000</div><div>주간사 대신증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>브릴스</b><div>청약일 2026.09.08~09.09</div><div>공모가 16,500~19,500</div><div>주간사 IBK투자증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>네오사피엔스</b><div>청약일 2026.09.08~09.09</div><div>공모가 13,800~15,800</div><div>주간사 대신증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>NH스팩34호</b><div>청약일 2026.09.01~09.02</div><div>공모가 2,000~2,000</div><div>주간사 NH투자증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>스카이랩스</b><div>청약일 2026.08.26~08.27</div><div>공모가 13,000~16,000</div><div>주간사 한국투자증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>니어스랩</b><div>청약일 2026.08.12~08.13</div><div>공모가 30,000~41,200</div><div>주간사 삼성증권</div></div>
-<div class="card soon"><span class="tag">예정</span><b>해치텍</b><div>청약일 2026.08.12~08.13</div><div>공모가 23,000~28,000</div><div>주간사 DB증권</div></div>
-<div class="card"><b>기도산업</b><div>청약일 2026.08.11~08.12</div><div>공모가 24,800~28,400</div><div>주간사 미래에셋증권,삼성증권</div></div>
-<div class="card"><b>케이앤에스아이앤씨</b><div>청약일 2026.08.04~08.05</div><div>공모가 9,000~11,000</div><div>주간사 IBK투자증권</div></div>
-<div class="card"><b>딜리셔스</b><div>청약일 2026.08.03~08.04</div><div>공모가 5,000~7,000</div><div>주간사 한국투자증권</div></div>
-<div class="card"><b>인제니아테라퓨틱스</b><div>청약일 2026.07.30~07.31</div><div>공모가 12,000~14,500</div><div>주간사 삼성증권</div></div>
-<div class="card"><b>에이치엘지노믹스</b><div>청약일 2026.07.13~07.14</div><div>공모가 18,500~21,500</div><div>주간사 KB증권,IBK투자증권</div></div>
-<div class="card"><b>레메디</b><div>청약일 2026.07.01~07.02</div><div>공모가 17,800~20,700</div><div>주간사 KB증권</div></div>
-<div class="card"><b>레몬헬스케어</b><div>청약일 2026.06.24~06.25</div><div>공모가 7,500~10,000</div><div>주간사 KB증권</div></div>
-<div class="card"><b>매드업</b><div>청약일 2026.06.23~06.24</div><div>공모가 7,000~8,000</div><div>주간사 미래에셋증권</div></div>
-<div class="card"><b>한국스팩16호</b><div>청약일 2026.06.22~06.23</div><div>공모가 2,000~2,000</div><div>주간사 한국투자증권</div></div>
-<div class="card"><b>스트라드비젼</b><div>청약일 2026.06.18~06.19</div><div>공모가 12,000~14,000</div><div>주간사 KB증권</div></div>
-<div class="card"><b>져스텍</b><div>청약일 2026.06.18~06.19</div><div>공모가 10,500~12,500</div><div>주간사 삼성증권</div></div>
-<div class="card"><b>메리츠스팩2호</b><div>청약일 2026.06.09~06.10</div><div>공모가 2,000~2,000</div><div>주간사 메리츠증권</div></div>
-<div class="card"><b>피스피스스튜디오</b><div>청약일 2026.05.26~05.27</div><div>공모가 19,000~21,500</div><div>주간사 NH투자증권,미래에셋증권</div></div>
-<div class="card"><b>대신밸런스스팩20호</b><div>청약일 2026.05.22~05.26</div><div>공모가 2,000~2,000</div><div>주간사 대신증권</div></div>
-<div class="card"><b>마키나락스</b><div>청약일 2026.05.11~05.12</div><div>공모가 12,500~15,000</div><div>주간사 미래에셋증권,현대차증권</div></div>
-<div class="card"><b>폴레드</b><div>청약일 2026.05.04~05.06</div><div>공모가 4,100~5,000</div><div>주간사 NH투자증권</div></div>
-<div class="card"><b>코스모로보틱스(구.엑소아틀레트아시아)</b><div>청약일 2026.04.27~04.28</div><div>공모가 5,300~6,000</div><div>주간사 유진투자증권,NH투자증권,유안타증권</div></div>
-<div class="card"><b>채비(구.대영채비)</b><div>청약일 2026.04.20~04.21</div><div>공모가 12,300~15,300</div><div>주간사 KB증권,삼성증권,대신증권,하나증권</div></div>
-<div class="card"><b>신한스팩18호</b><div>청약일 2026.04.20~04.21</div><div>공모가 2,000~2,000</div><div>주간사 신한투자증권</div></div>
-<div class="card"><b>키움히어로스팩2호</b><div>청약일 2026.04.14~04.15</div><div>공모가 2,000~2,000</div><div>주간사 키움증권</div></div>
+<div class="card urgent"><span class="tag t-urgent">오늘 마감</span><b>기도산업</b><div>청약일 2026.08.11~08.12</div><div>공모가 24,800~28,400</div><div>주간사 미래에셋증권,삼성증권</div></div>
+<div class="card urgent"><span class="tag t-urgent">내일 마감</span><b>니어스랩</b><div>청약일 2026.08.12~08.13</div><div>공모가 30,000~41,200</div><div>주간사 삼성증권</div></div>
+<div class="card urgent"><span class="tag t-urgent">내일 마감</span><b>해치텍</b><div>청약일 2026.08.12~08.13</div><div>공모가 23,000~28,000</div><div>주간사 DB증권</div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>스카이랩스</b><div>청약일 2026.08.26~08.27</div><div>공모가 13,000~16,000</div><div>주간사 한국투자증권</div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>NH스팩34호</b><div>청약일 2026.09.01~09.02</div><div>공모가 2,000~2,000</div><div>주간사 NH투자증권</div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>브릴스</b><div>청약일 2026.09.08~09.09</div><div>공모가 16,500~19,500</div><div>주간사 IBK투자증권</div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>네오사피엔스</b><div>청약일 2026.09.08~09.09</div><div>공모가 13,800~15,800</div><div>주간사 대신증권</div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>와이즈플래닛컴퍼니</b><div>청약일 2026.09.14~09.15</div><div>공모가 10,000~12,000</div><div>주간사 대신증권</div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>빅웨이브로보틱스</b><div>청약일 2026.09.16~09.17</div><div>공모가 20,000~24,000</div><div>주간사 유진투자증권,미래에셋증권</div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>덕산넵코어스(구.넵코어스)</b><div>청약일 2026.09.16~09.17</div><div>공모가 12,400~14,600</div><div>주간사 대신증권</div></div>
+<div class="card "><span class="tag t-soon">예정</span><b>글로벌테크놀로지</b><div>청약일 2026.09.16~09.17</div><div>공모가 13,000~15,000</div><div>주간사 한국투자증권</div></div>
