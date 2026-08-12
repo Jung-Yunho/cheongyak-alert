@@ -414,7 +414,7 @@ public class Cheongyak {
                 .append(" KST · 출처 청약홈")
                 .append(" · 접수 마감된 건은 빼고 보여줍니다</div>\n");
 
-        section(b, "아파트", items, "apt:", today);   // 호출 쪽에서 정렬해서 넘긴다
+        section(b, "아파트", items, today);   // 호출 쪽에서 정렬해서 넘긴다
 
         // 정적 페이지라 필터는 브라우저에서 보이고 숨기는 방식이다.
         // 시·군·구 목록은 실제로 실린 카드에서 만들어 빈 항목이 안 생기게 한다.
@@ -475,31 +475,26 @@ public class Cheongyak {
     }
 
     static void section(StringBuilder b, String title, List<Item> all,
-                        String prefix, String today) {
-        boolean apt = prefix.equals("apt:");
+                        String today) {
         b.append("<h2>").append(title).append("</h2>\n");
-        if (apt) {
-            b.append("""
-                    <div class="filter">
-                      <select id="sido"><option value="">시·도 전체</option></select>
-                      <select id="gugun"><option value="">시·군·구 전체</option></select>
-                      <span id="cnt"></span>
-                    </div>
-                    """);
-        }
+        b.append("""
+                <div class="filter">
+                  <select id="sido"><option value="">시·도 전체</option></select>
+                  <select id="gugun"><option value="">시·군·구 전체</option></select>
+                  <span id="cnt"></span>
+                </div>
+                """);
         boolean any = false;
         for (Item it : all) {
-            if (!it.key().startsWith(prefix)) continue;
             any = true;
             String[] lines = it.text().split("\n");
             String head = lines[0];   // 첫 줄이 이름
             String[] s = badge(it, today);   // [카드 클래스, 태그 클래스, 문구, 이모지]
-            b.append("<div class=\"card ").append(s[0]).append("\"");
-            if (apt) {   // 필터가 읽는다. 값이 비어 있어도 속성 자체는 항상 남긴다.
-                b.append(" data-sido=\"").append(htmlEsc(it.sido()))
-                        .append("\" data-gugun=\"").append(htmlEsc(it.gugun())).append("\"");
-            }
-            b.append(">")
+            // data-* 는 필터가 읽는다. 값이 비어 있어도 속성 자체는 항상 남긴다.
+            b.append("<div class=\"card ").append(s[0]).append("\"")
+                    .append(" data-sido=\"").append(htmlEsc(it.sido()))
+                    .append("\" data-gugun=\"").append(htmlEsc(it.gugun())).append("\"")
+                    .append(">")
                     .append("<span class=\"tag ").append(s[1]).append("\">")
                     .append(s[2]).append("</span>")
                     .append("<b>").append(htmlEsc(head)).append("</b>");
@@ -808,6 +803,15 @@ public class Cheongyak {
                 "접수중(마감임박순) -> 예정(시작순) 정렬, 실제=" + keys);
         check(htmlEsc("<a href=\"x\">&</a>")
                 .equals("&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;"), "HTML 이스케이프");
+
+        // 페이지는 소스(키 접두어)와 무관하게 전부 싣는다.
+        // 한때 "apt:" 로만 걸러서 무순위 건이 페이지에서만 통째로 빠진 적이 있다.
+        StringBuilder page = new StringBuilder();
+        section(page, "아파트", List.of(
+                new Item("apt:1", "2026-08-01", "2026-08-20", "서울", "마포구", "분양건\n서울"),
+                new Item("rem:2", "2026-08-01", "2026-08-20", "인천", "검단구", "무순위건\n인천")), today);
+        check(page.indexOf("분양건") > 0 && page.indexOf("무순위건") > 0, "두 소스 모두 페이지에 실림");
+        check(page.indexOf("data-sido=\"인천\" data-gugun=\"검단구\"") > 0, "무순위에도 필터 속성");
         check(argValue(List.of("--html", "docs/index.html"), "--html").equals("docs/index.html")
                 && argValue(List.of("--html"), "--html") == null, "인자 값 파싱");
 
