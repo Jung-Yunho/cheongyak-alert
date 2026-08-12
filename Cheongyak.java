@@ -1,5 +1,5 @@
 /*
- * 청약 알림 - 아파트 분양 + 무순위·잔여세대(청약홈)의 신규 공고를 텔레그램으로 보낸다.
+ * 청약 알림 - 아파트 분양 + 무순위·잔여세대 + 임의공급(청약홈)의 신규 공고를 알린다.
  *
  * 빌드 불필요. JDK 11 이상이면 소스 파일을 그대로 실행한다.
  *   java Cheongyak.java             평소 실행 (작업 스케줄러에 등록)
@@ -58,6 +58,9 @@ public class Cheongyak {
             // 무순위·잔여세대. 대부분 당일 접수(하루짜리)라 오히려 놓치기 쉽다.
             new Source("무순위·잔여세대", BASE + "getRemndrLttotPblancDetail",
                     BASE + "getRemndrLttotPblancMdl", "rem:"),
+            // 임의공급. 무순위에서도 남은 물량을 선착순으로 푸는 단계다. 이것도 아파트다.
+            new Source("임의공급", BASE + "getOPTLttotPblancDetail",
+                    BASE + "getOPTLttotPblancMdl", "opt:"),
     };
 
     // 청약홈 SUBSCRPT_AREA_CODE_NM 은 "서울" "경기" "인천" 처럼 짧은 표기다
@@ -80,6 +83,18 @@ public class Cheongyak {
     /** 0 = 접수 중(가장 급하다), 1 = 접수 예정. 마감된 건은 애초에 수집 단계에서 뺀다. */
     static int rank(Item it, String today) {
         return !it.start().isEmpty() && it.start().compareTo(today) > 0 ? 1 : 0;
+    }
+
+    /**
+     * 날짜를 ISO 로 맞춘다. 소스마다 형식이 다르다 —
+     * 임의공급은 "20260813", 아파트 분양·무순위는 "2026-08-13" 을 준다.
+     *
+     * 섞이면 문자열 비교가 조용히 망가진다. "20260813" > "2026-08-12" 이라
+     * (다섯째 글자에서 '0' > '-') 마감 판정이 통째로 무력화된다.
+     */
+    static String iso(String d) {
+        return d.matches("\\d{8}")
+                ? d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6) : d;
     }
 
     /** 마감일이 지났는가. 종료일을 모르면 함부로 버리지 않는다. */
@@ -203,6 +218,18 @@ public class Cheongyak {
     static final Pattern BLOCK =
             Pattern.compile("\\s*\\(?[A-Za-z]{1,3}-?\\d+(?:-\\d+)?\\s*(?:BL|블록)\\)?");
 
+    /**
+     * 네이버 지도 검색 주소. `/p/search/<검색어>` 가 정식이다(`/v5/` 는 302 로 넘어간다).
+     *
+     * 검색어가 **쿼리스트링이 아니라 경로**에 들어간다. 경로에서 `+` 는 공백이 아니라
+     * 문자 그대로라, URLEncoder 가 만드는 `+` 를 `%20` 으로 바꿔야 한다.
+     * 카카오(`?q=`)에서 그대로 옮기면 여기서 조용히 틀린다.
+     */
+    static String mapUrl(String addr) {
+        String q = URLEncoder.encode(mapQuery(addr), StandardCharsets.UTF_8).replace("+", "%20");
+        return "https://map.naver.com/p/search/" + q;
+    }
+
     static String mapQuery(String addr) {
         String s = addr.trim();
         Matcher m = INNER_ADDR.matcher(s);
@@ -233,27 +260,28 @@ public class Cheongyak {
             String area = f(r, "SUBSCRPT_AREA_CODE_NM");
             if (!regions.isEmpty() && regions.stream().noneMatch(area::contains)) continue;
 
-            String end = first(r, "RCEPT_ENDDE", "SUBSCRPT_RCEPT_ENDDE", "GNRL_RCEPT_ENDDE");
+            String end = iso(first(r, "RCEPT_ENDDE", "SUBSCRPT_RCEPT_ENDDE", "GNRL_RCEPT_ENDDE"));
             // 이미 접수 마감된 공고는 알릴 이유가 없다. 날짜가 ISO 라 문자열 비교로 충분.
             if (closed(end, today)) continue;
 
             String no = f(r, "PBLANC_NO"), name = f(r, "HOUSE_NM");
             if (no.isEmpty() || name.isEmpty()) continue;
 
-            String bgn = first(r, "RCEPT_BGNDE", "SUBSCRPT_RCEPT_BGNDE", "GNRL_RCEPT_BGNDE");
-            String win = f(r, "PRZWNER_PRESNATN_DE");
+            String bgn = iso(first(r, "RCEPT_BGNDE", "SUBSCRPT_RCEPT_BGNDE", "GNRL_RCEPT_BGNDE"));
+            String win = iso(f(r, "PRZWNER_PRESNATN_DE"));
+            String noticeDe = iso(f(r, "RCRIT_PBLANC_DE"));
             List<String> lines = new ArrayList<>();
             lines.add(name);
             lines.add(join(" · ", area, f(r, "HOUSE_SECD_NM")));
             lines.add(prefix("분양가 ", or(prices.get(no), "")));
             lines.add(f(r, "HSSPLY_ADRES"));
-            lines.add(prefix("공고일 ", f(r, "RCRIT_PBLANC_DE")));
+            lines.add(prefix("공고일 ", noticeDe));
             lines.add(bgn.isEmpty() && end.isEmpty() ? "" : "접수 " + bgn + " ~ " + end);
             lines.add(prefix("당첨발표 ", win));
             lines.add(f(r, "PBLANC_URL"));
             lines.removeIf(String::isBlank);
             String addr = f(r, "HSSPLY_ADRES");
-            out.add(new Item(prefix + no, or(bgn, f(r, "RCRIT_PBLANC_DE")), end,
+            out.add(new Item(prefix + no, or(bgn, noticeDe), end,
                     area, gugunOf(addr), addr, String.join("\n", lines)));
         }
         return out;
@@ -294,7 +322,8 @@ public class Cheongyak {
                 long min = Long.MAX_VALUE, max = 0;
                 for (Map<String, String> r : parseRecords(
                         new String(get(url), StandardCharsets.UTF_8))) {
-                    String v = f(r, "LTTOT_TOP_AMOUNT");
+                    // 임의공급은 "27,600" 처럼 쉼표를 넣어 준다. 다른 소스는 안 넣는다.
+                    String v = f(r, "LTTOT_TOP_AMOUNT").replace(",", "");
                     if (!v.matches("\\d+")) continue;
                     long amt = Long.parseLong(v);
                     if (amt <= 0) continue;          // 값이 안 정해진 주택형
@@ -549,8 +578,7 @@ public class Cheongyak {
                 } else if (!it.addr().isEmpty() && l.equals(it.addr())) {
                     // 주소는 지도 검색으로 연결한다. 좌표가 API 에 없어 지도를 직접 그리려면
                     // 지오코딩 키가 하나 더 필요한데, 링크면 그 비용 없이 목적을 채운다.
-                    html = "<a href=\"https://map.kakao.com/?q="
-                            + htmlEsc(URLEncoder.encode(mapQuery(l), StandardCharsets.UTF_8))
+                    html = "<a href=\"" + htmlEsc(mapUrl(l))
                             + "\" target=\"_blank\" rel=\"noopener\">" + htmlEsc(l) + "</a>";
                 } else {
                     html = htmlEsc(l);
@@ -794,6 +822,12 @@ public class Cheongyak {
     static void selftest() {
         String today = "2026-08-12";
 
+        // 소스마다 날짜 형식이 다르다. 안 맞추면 마감 판정이 통째로 무력화된다.
+        check(iso("20260813").equals("2026-08-13"), "8자리 -> ISO");
+        check(iso("2026-08-13").equals("2026-08-13") && iso("").isEmpty(), "이미 ISO 면 그대로");
+        check(closed(iso("20260811"), today), "변환 후에는 마감으로 잡힌다");
+        check(!closed("20260811", today), "변환 안 하면 마감이 안 잡힌다 — 이게 실제 버그였다");
+
         check(!closed("", today), "종료일 모르면 버리지 않는다");
         check(closed("2026-08-11", today) && !closed("2026-08-12", today), "당일은 아직 안 끝났다");
 
@@ -875,6 +909,12 @@ public class Cheongyak {
                 .equals("인천광역시 검단구 검단신도시"), "BL 접미 블록 코드");
         check(mapQuery("경기도 성남시 수정구 신흥동 81-8")
                 .equals("경기도 성남시 수정구 신흥동 81-8"), "지번은 블록 코드로 오인하지 않는다");
+
+        // 네이버는 경로에 검색어가 들어가므로 공백이 "+" 가 아니라 "%20" 이어야 한다
+        String u = mapUrl("서울특별시 중구 중림동 157-2번지");
+        check(u.startsWith("https://map.naver.com/p/search/"), "네이버 지도 주소");
+        check(!u.contains("+"), "경로에 + 가 남으면 안 된다 (실제=" + u + ")");
+        check(u.contains("%20"), "공백은 %20");
         check(mapQuery("경기도 오산시 오산세교2지구 A-13블록 호반써밋(경기도 오산시 초평중앙로 65)")
                 .equals("경기도 오산시 초평중앙로 65"), "괄호 안이 도로명이어도 그쪽");
         check(mapQuery("경기도 광주시 초월읍 도곡길 27(쌍동리 402)")
