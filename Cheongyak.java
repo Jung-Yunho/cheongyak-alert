@@ -104,19 +104,24 @@ public class Cheongyak {
     }
 
     /**
-     * 공고의 현재 상태. soon(예정) / open(접수중) / d1(내일 마감) / d0(오늘 마감).
+     * 공고의 현재 상태. soon(예정) / open(접수중) / d2(모레 마감) / d1(내일 마감) / d0(오늘 마감).
      *
      * 이 값이 중복 판정 키에 들어간다. 공고 번호만으로 판정하면 **한 공고당 평생 한 번**만
      * 알리게 되는데, 보통 공고가 뜨는 건 접수 며칠 전이라 "예정" 알림 하나 받고 끝난다.
      * 정작 접수가 시작될 때도, 마감 전날에도 아무 소식이 없어 놓치기 쉽다.
-     * 상태가 바뀔 때마다 다시 알리면 예정 → 접수중 → 내일 마감 → 오늘 마감 순으로
-     * 필요한 시점에 한 번씩 온다.
+     *
+     * 마감 3일 전부터는 매일 상태가 바뀌므로 연달아 알림이 간다. 수도권 414건을 재보니
+     * 접수 기간이 1일 47% · 2일 18% · 3일 15% · 4일 9% 로 **88%가 4일 이내**라,
+     * 이것만으로 대부분 매일 알림이 된다. "접수중이면 무조건 매일" 로 하면 나머지 12%를
+     * 위해 같은 목록을 매일 반복하게 되고, 반복되면 안 읽게 되어 정작 마감일 알림도 흘린다.
      */
     static String stateOf(Item it, String today) {
         if (rank(it, today) == 1) return "soon";
         if (it.end().isEmpty()) return "open";
+        LocalDate t = LocalDate.parse(today);
         if (it.end().equals(today)) return "d0";
-        if (it.end().equals(LocalDate.parse(today).plusDays(1).toString())) return "d1";
+        if (it.end().equals(t.plusDays(1).toString())) return "d1";
+        if (it.end().equals(t.plusDays(2).toString())) return "d2";
         return "open";
     }
 
@@ -911,6 +916,8 @@ public class Cheongyak {
             case "soon" -> new String[]{"", "t-soon", "예정", "🟠"};
             case "d0" -> new String[]{"urgent", "t-urgent", "오늘 마감", "🔴"};
             case "d1" -> new String[]{"urgent", "t-urgent", "내일 마감", "🔴"};
+            // 모레는 아직 급하지 않으니 색은 접수중과 같이 두고 문구로만 알린다.
+            case "d2" -> new String[]{"open", "t-open", "모레 마감", "🟢"};
             default -> new String[]{"open", "t-open", "접수중", "🟢"};
         };
     }
@@ -1219,19 +1226,24 @@ public class Cheongyak {
         check(stateOf(open, today).equals("open"), "접수 기간 안은 open");
         check(stateOf(tmr, today).equals("d1"), "내일 마감은 d1");
         check(stateOf(urgent, today).equals("d0"), "오늘 마감은 d0");
+        check(stateOf(new Item("apt:x", "2026-08-01", "2026-08-14", "", "", "", "", "", "", ""),
+                today).equals("d2"), "모레 마감은 d2");
+        check(stateOf(new Item("apt:y", "2026-08-01", "2026-08-15", "", "", "", "", "", "", ""),
+                today).equals("open"), "사흘 뒤부터는 그냥 접수중");
         check(notifyKey(urgent, today).equals("apt:u:d0"), "알림 키에 상태가 붙는다");
 
-        // 같은 공고(접수 08-18~08-21)를 날짜만 바꿔가며 보면 키가 네 번 달라져야 한다
-        Item run = new Item("apt:r", "2026-08-18", "2026-08-21", "서울", "중구", "", "", "", "", "x");
+        // 긴 접수(08-18~08-26, 9일)를 날짜만 바꿔가며 보면 마지막 사흘이 연달아 달라진다
+        Item run = new Item("apt:r", "2026-08-18", "2026-08-26", "서울", "중구", "", "", "", "", "x");
         List<String> keys = new ArrayList<>();
-        for (String d : List.of("2026-08-12", "2026-08-18", "2026-08-19",
-                "2026-08-20", "2026-08-21")) {
+        for (String d : List.of("2026-08-12", "2026-08-18", "2026-08-21", "2026-08-23",
+                "2026-08-24", "2026-08-25", "2026-08-26")) {
             String k = notifyKey(run, d);
             if (keys.isEmpty() || !keys.get(keys.size() - 1).equals(k)) keys.add(k);
         }
-        check(keys.equals(List.of("apt:r:soon", "apt:r:open", "apt:r:d1", "apt:r:d0")),
-                "예정 -> 접수중 -> 내일마감 -> 오늘마감 (실제=" + keys + ")");
-        check(notifyKey(run, "2026-08-18").equals(notifyKey(run, "2026-08-19")),
+        check(keys.equals(List.of("apt:r:soon", "apt:r:open",
+                        "apt:r:d2", "apt:r:d1", "apt:r:d0")),
+                "예정 -> 접수중 -> 모레 -> 내일 -> 오늘 마감 (실제=" + keys + ")");
+        check(notifyKey(run, "2026-08-18").equals(notifyKey(run, "2026-08-21")),
                 "같은 상태가 이어지면 다시 안 알린다");
 
         List<Item> order = sortForDisplay(List.of(soon2, open, soon1, urgent, tmr), today);

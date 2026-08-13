@@ -2,9 +2,10 @@ name: 청약 알림
 
 on:
   schedule:
-    # GitHub 의 cron 은 UTC 다. 00:00 UTC = 09:00 KST.
-    # 예약 실행은 러너가 붐비면 수십 분 밀릴 수 있다. 이 용도엔 문제되지 않는다.
-    - cron: '0 0 * * *'
+    # GitHub 의 cron 은 UTC 다. 23:00 UTC = 다음 날 08:00 KST.
+    # 예약 실행은 러너가 붐비면 수십 분~1시간 밀린다(실측 67분). 그래서 09시가 아니라
+    # 08시에 걸어 밀리더라도 오전 중에 도착하게 한다.
+    - cron: '0 23 * * *'
   workflow_dispatch:        # Actions 탭에서 수동 실행
 
 permissions:
