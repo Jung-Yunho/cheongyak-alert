@@ -104,6 +104,28 @@ public class Cheongyak {
     }
 
     /**
+     * 공고의 현재 상태. soon(예정) / open(접수중) / d1(내일 마감) / d0(오늘 마감).
+     *
+     * 이 값이 중복 판정 키에 들어간다. 공고 번호만으로 판정하면 **한 공고당 평생 한 번**만
+     * 알리게 되는데, 보통 공고가 뜨는 건 접수 며칠 전이라 "예정" 알림 하나 받고 끝난다.
+     * 정작 접수가 시작될 때도, 마감 전날에도 아무 소식이 없어 놓치기 쉽다.
+     * 상태가 바뀔 때마다 다시 알리면 예정 → 접수중 → 내일 마감 → 오늘 마감 순으로
+     * 필요한 시점에 한 번씩 온다.
+     */
+    static String stateOf(Item it, String today) {
+        if (rank(it, today) == 1) return "soon";
+        if (it.end().isEmpty()) return "open";
+        if (it.end().equals(today)) return "d0";
+        if (it.end().equals(LocalDate.parse(today).plusDays(1).toString())) return "d1";
+        return "open";
+    }
+
+    /** 중복 판정용 키. 공고 식별자 + 상태. Item.key() 자체는 공고 식별자로만 남겨둔다. */
+    static String notifyKey(Item it, String today) {
+        return it.key() + ":" + stateOf(it, today);
+    }
+
+    /**
      * 날짜를 ISO 로 맞춘다. 소스마다 형식이 다르다 —
      * 임의공급은 "20260813", 아파트 분양·무순위는 "2026-08-13" 을 준다.
      *
@@ -884,13 +906,13 @@ public class Cheongyak {
      * 마감된 건은 수집 단계에서 이미 빠지므로 여기서는 다루지 않는다.
      */
     static String[] badge(Item it, String today) {
-        if (rank(it, today) == 1) return new String[]{"", "t-soon", "예정", "🟠"};
-        String tomorrow = LocalDate.parse(today).plusDays(1).toString();
-        if (!it.end().isEmpty() && it.end().compareTo(tomorrow) <= 0) {
-            return new String[]{"urgent", "t-urgent",
-                    it.end().equals(today) ? "오늘 마감" : "내일 마감", "🔴"};
-        }
-        return new String[]{"open", "t-open", "접수중", "🟢"};
+        // 상태 판정은 stateOf 하나로 모은다. 배지와 알림 기준이 갈리면 화면과 알림이 어긋난다.
+        return switch (stateOf(it, today)) {
+            case "soon" -> new String[]{"", "t-soon", "예정", "🟠"};
+            case "d0" -> new String[]{"urgent", "t-urgent", "오늘 마감", "🔴"};
+            case "d1" -> new String[]{"urgent", "t-urgent", "내일 마감", "🔴"};
+            default -> new String[]{"open", "t-open", "접수중", "🟢"};
+        };
     }
 
     /** 메시지용 본문. 첫 줄(이름) 앞에 상태를 붙인다. */
@@ -993,7 +1015,7 @@ public class Cheongyak {
         Set<String> seen = loadSeen();
         if (seen == null) {
             Set<String> all = new TreeSet<>();
-            for (Item i : items) all.add(i.key());
+            for (Item i : items) all.add(notifyKey(i, today));
             saveSeen(all);
             System.out.println("첫 실행: " + items.size()
                     + "건을 기준으로 등록했습니다. 다음 실행부터 신규 건만 알립니다.");
@@ -1001,8 +1023,14 @@ public class Cheongyak {
             return;
         }
 
+        // 상태 없는 옛 키가 남아 있으면 그 공고의 지금 상태는 이미 알린 것으로 올려둔다.
+        // 안 하면 키 형식이 바뀌는 순간 전부 신규로 잡혀 한 번 도배된다.
+        for (Item i : items) {
+            if (seen.remove(i.key())) seen.add(notifyKey(i, today));
+        }
+
         List<Item> fresh = new ArrayList<>();
-        for (Item i : items) if (!seen.contains(i.key())) fresh.add(i);
+        for (Item i : items) if (!seen.contains(notifyKey(i, today))) fresh.add(i);
         if (fresh.isEmpty()) { System.out.println("신규 없음"); return; }
 
         String webUrl = or(System.getenv("WEB_URL"), "");
@@ -1013,7 +1041,7 @@ public class Cheongyak {
         } else {
             sendAll(token, chats, fresh, webUrl, today);
             System.out.println(fresh.size() + "건 전송 (수신자 " + chats.size() + "명)");
-            for (Item i : fresh) seen.add(i.key());
+            for (Item i : fresh) seen.add(notifyKey(i, today));
             saveSeen(seen);   // 전송에 성공한 뒤에만 기록한다
         }
     }
@@ -1186,11 +1214,31 @@ public class Cheongyak {
         check(badge(urgent, today)[0].equals("urgent") && badge(open, today)[0].equals("open"),
                 "카드 강조 클래스");
 
-        List<Item> order = sortForDisplay(List.of(soon2, open, soon1, urgent, tmr), today);
+        // 상태 전이마다 다시 알린다. 공고 번호만으로 판정하면 평생 한 번만 알리게 된다.
+        check(stateOf(soon1, today).equals("soon"), "접수 전은 soon");
+        check(stateOf(open, today).equals("open"), "접수 기간 안은 open");
+        check(stateOf(tmr, today).equals("d1"), "내일 마감은 d1");
+        check(stateOf(urgent, today).equals("d0"), "오늘 마감은 d0");
+        check(notifyKey(urgent, today).equals("apt:u:d0"), "알림 키에 상태가 붙는다");
+
+        // 같은 공고(접수 08-18~08-21)를 날짜만 바꿔가며 보면 키가 네 번 달라져야 한다
+        Item run = new Item("apt:r", "2026-08-18", "2026-08-21", "서울", "중구", "", "", "", "", "x");
         List<String> keys = new ArrayList<>();
-        for (Item i : order) keys.add(i.key());
-        check(keys.equals(List.of("apt:u", "apt:t", "apt:o", "apt:s1", "apt:s2")),
-                "접수중(마감임박순) -> 예정(시작순) 정렬, 실제=" + keys);
+        for (String d : List.of("2026-08-12", "2026-08-18", "2026-08-19",
+                "2026-08-20", "2026-08-21")) {
+            String k = notifyKey(run, d);
+            if (keys.isEmpty() || !keys.get(keys.size() - 1).equals(k)) keys.add(k);
+        }
+        check(keys.equals(List.of("apt:r:soon", "apt:r:open", "apt:r:d1", "apt:r:d0")),
+                "예정 -> 접수중 -> 내일마감 -> 오늘마감 (실제=" + keys + ")");
+        check(notifyKey(run, "2026-08-18").equals(notifyKey(run, "2026-08-19")),
+                "같은 상태가 이어지면 다시 안 알린다");
+
+        List<Item> order = sortForDisplay(List.of(soon2, open, soon1, urgent, tmr), today);
+        List<String> sorted = new ArrayList<>();
+        for (Item i : order) sorted.add(i.key());
+        check(sorted.equals(List.of("apt:u", "apt:t", "apt:o", "apt:s1", "apt:s2")),
+                "접수중(마감임박순) -> 예정(시작순) 정렬, 실제=" + sorted);
         check(htmlEsc("<a href=\"x\">&</a>")
                 .equals("&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;"), "HTML 이스케이프");
 
