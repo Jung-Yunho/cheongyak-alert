@@ -67,6 +67,16 @@ public class Cheongyak {
     // ("서울특별시" 가 아니다). 실제 응답 1000건에서 확인한 값.
     static final String DEFAULT_REGIONS = "서울,경기,인천";
 
+    /**
+     * 모든 날짜 판단의 기준 시간대.
+     *
+     * 러너는 UTC 로 도는데 스케줄이 23:00 UTC(= 다음 날 08:00 KST)라, 기본 시간대를 쓰면
+     * LocalDate.now() 가 **하루 전** 날짜를 준다. 그러면 어제 마감된 건이 "오늘 마감" 으로
+     * 남고, 오늘 마감인 건이 "예정" 으로 보여 알림이 안 나간다.
+     * 09:00 KST(= 00:00 UTC) 로 돌 때는 두 날짜가 같아 드러나지 않던 문제다.
+     */
+    static final java.time.ZoneId KST = java.time.ZoneId.of("Asia/Seoul");
+
     /** 분양가를 낼 때 뺄 소형 타입의 기준(전용 ㎡ 이하). MIN_AREA 환경변수로 조정한다. */
     static final double MIN_AREA = parseArea(System.getenv("MIN_AREA"), 50);
 
@@ -697,7 +707,7 @@ public class Cheongyak {
                 </style>
                 """);
         b.append("<div class=\"wrap\">\n<h1>청약 알림</h1>\n<div class=\"sub\">갱신 ")
-                .append(htmlEsc(java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Seoul"))
+                .append(htmlEsc(java.time.ZonedDateTime.now(KST)
                         .format(java.time.format.DateTimeFormatter
                                 .ofPattern("yyyy-MM-dd HH:mm"))))
                 .append(" KST · 출처 청약홈 · 접수 마감된 건은 빼고 보여줍니다</div>\n");
@@ -985,7 +995,7 @@ public class Cheongyak {
             System.exit(1);
         }
 
-        String today = LocalDate.now().toString();
+        String today = LocalDate.now(KST).toString();   // 러너가 UTC 라 시간대를 반드시 준다
         List<Item> items = new ArrayList<>();
 
         String where = regions.isEmpty() ? "전국" : String.join(",", regions);
